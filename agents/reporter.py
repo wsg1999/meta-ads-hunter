@@ -82,7 +82,14 @@ def color_amenaza(nivel):
     return {"alto": C_ROJO, "medio": C_AMARILLO, "bajo": C_VERDE}.get(nivel.lower(), C_AMARILLO)
 
 def build_meta_url(nombre, pais="MX"):
-    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={nombre.replace(' ', '+')}"
+    """URL de búsqueda por nombre de página — muestra todos los anuncios activos de esa marca."""
+    q = nombre.replace(' ', '+').replace('&', '%26')
+    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={q}"
+
+def build_keyword_url(nombre_producto, pais="MX"):
+    """URL alternativa buscando por keyword del producto — útil si el nombre de página no coincide exactamente."""
+    q = nombre_producto.replace(' ', '+').replace('&', '%26')
+    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=keyword_unordered&q={q}"
 
 def connect_sheet():
     creds = Credentials.from_service_account_info(
@@ -143,17 +150,18 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             pais  = p.get("pais_origen", "MX")
             rows.append([
                 today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
-                anun, build_meta_url(anun, pais),
-                p.get("ad_url") or p.get("url_anunciante") or build_meta_url(anun, pais),
+                anun,
+                build_meta_url(anun, pais),          # Ver todos los anuncios de la marca
+                p.get("ad_url") or p.get("url_anunciante") or build_keyword_url(p.get("nombre",""), pais),
                 p.get("tipo_anuncio",""), score, dias,
                 p.get("gasto_dia",""), p.get("variaciones",""),
-                ", ".join(p.get("paises",[])),
+                ", ".join(p.get("paises", [pais])),
                 p.get("precio_venta_mxn",""), p.get("costo_estimado_mxn",""), p.get("margen_pct",""),
                 p.get("angulo_venta",""), p.get("por_que_ganador",""),
                 "Sí" if p.get("tendencia") else "No",
-                p.get("calidad_contenido",""),
-                ", ".join(p.get("señales_dropshipping",[])),
-                p.get("keyword_origen",""),
+                p.get("calidad_contenido", p.get("calidad_score","")),
+                ", ".join(p.get("señales_dropshipping", p.get("señales_drop", []))),
+                p.get("keyword_origen", p.get("keyword","")),
             ])
             sr = start + i
             fmt_reqs.append(color_cell(ws_win.id, sr, 8, 9, color_score(score)))   # col H score

@@ -39,8 +39,21 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
                                   price_seg=price_seg, genero=genero)
     log_entries.append(f"Anuncios analizados → potenciales ganadores: {len(analyzed)}")
 
+    # Guardar índice de productos originales por nombre para recuperar campos después
+    original_by_name = {p.get("nombre", ""): p for p in analyzed}
+
     # Quality
-    approved, rejected = await classify_and_filter(analyzed, content_filter)
+    approved_raw, rejected = await classify_and_filter(analyzed, content_filter)
+
+    # MERGE: fusionar campos del quality_agent con los datos completos del analyzer
+    # Así nunca se pierden gasto_dia, precio, margen, ángulo, etc.
+    approved = []
+    for p in approved_raw:
+        nombre = p.get("nombre", "")
+        original = original_by_name.get(nombre, {})
+        merged = {**original, **p}   # quality_agent tiene prioridad para sus campos
+        approved.append(merged)
+
     tipos = {}
     for p in approved:
         t = p.get("tipo_anuncio", "desconocido")
