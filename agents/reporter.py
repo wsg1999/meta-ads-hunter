@@ -1,8 +1,8 @@
 """
-REPORTER v2 — Guarda en Google Sheets con 3 pestañas:
-  - Ganadores   : productos aprobados con clasificación drop/marca/IA
-  - Descartados : productos rechazados con motivo
-  - Log diario  : resumen de cada ejecución
+REPORTER v3 — Google Sheets con:
+  - Enlace directo a Meta Ads Library del anunciante
+  - Colores por días activo (verde=fresquísimo, amarillo=reciente, naranja=moderado)
+  - Colores por score
 """
 import os, json
 from datetime import datetime
@@ -16,99 +16,114 @@ SCOPES = [
 
 SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
-# ── Cabeceras ──────────────────────────────────────────────────────
 HEADERS_WINNERS = [
     "Fecha", "Producto", "Marca", "Categoría",
-    "Tipo anuncio",
-    "Señales dropshipping",
-    "Señales marca real",
-    "Calidad contenido /10",
-    "Días activo", "Gasto/día (USD)", "Variaciones",
-    "Países", "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
-    "Ángulo de venta", "Por qué es ganador",
-    "Tendencia", "Score /10",
-    "Nombre anunciante",
-    "Ver todos sus anuncios",
+    "Nombre anunciante", "Ver anuncios en Meta",
+    "Tipo anuncio", "Score /10", "Días activo",
+    "Gasto/día (USD)", "Variaciones", "Países",
+    "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
+    "Ángulo de venta", "Por qué es ganador", "Tendencia",
+    "Calidad /10", "Señales dropshipping", "Señales marca real",
     "Keyword origen", "País origen",
 ]
 
 HEADERS_REJECTED = [
     "Fecha", "Producto", "Marca", "Categoría",
     "Motivo rechazo", "Categoría rechazo",
-    "Tipo anuncio detectado",
-    "Score original", "Keyword origen",
+    "Tipo anuncio", "Score", "Keyword origen",
 ]
 
 HEADERS_LOG = [
-    "Fecha", "Hora inicio", "Keywords usadas",
-    "Anuncios scrapeados", "Analizados", "Aprobados", "Descartados",
-    "Tipos (drop/marca/ia)", "Notas",
+    "Fecha", "Hora", "Keywords",
+    "Scrapeados", "Analizados", "Aprobados", "Descartados",
+    "Tipos", "Notas",
 ]
 
-# ── Helpers ────────────────────────────────────────────────────────
-def get_or_create_tab(sheet, name: str, headers: list):
-    try:
-        ws = sheet.worksheet(name)
-    except gspread.WorksheetNotFound:
-        ws = sheet.add_worksheet(name, rows=2000, cols=len(headers))
-        ws.append_row(headers)
-        # Formato de cabecera: negrita
-        ws.format("1:1", {"textFormat": {"bold": True}})
-    vals = ws.get_all_values()
-    if not vals:
-        ws.append_row(headers)
-    return ws
+COLOR_DIAS_FRESCO   = {"red": 0.565, "green": 0.933, "blue": 0.565}  # verde  ≤7d
+COLOR_DIAS_RECIENTE = {"red": 0.984, "green": 0.933, "blue": 0.459}  # amarillo 8-15d
+COLOR_DIAS_MODERADO = {"red": 1.0,   "green": 0.737, "blue": 0.318}  # naranja 16-25d
+COLOR_DIAS_ANTIGUO  = {"red": 0.957, "green": 0.490, "blue": 0.490}  # rojo >25d
+
+COLOR_SCORE_TOP  = {"red": 0.204, "green": 0.780, "blue": 0.349}  # verde oscuro 9-10
+COLOR_SCORE_ALTO = {"red": 0.565, "green": 0.933, "blue": 0.565}  # verde claro  7-8
+COLOR_SCORE_MED  = {"red": 0.984, "green": 0.933, "blue": 0.459}  # amarillo     5-6
+COLOR_SCORE_BAJO = {"red": 0.957, "green": 0.490, "blue": 0.490}  # rojo         <5
+
+def get_color_dias(d):
+    if d <= 7:  return COLOR_DIAS_FRESCO
+    if d <= 15: return COLOR_DIAS_RECIENTE
+    if d <= 25: return COLOR_DIAS_MODERADO
+    return COLOR_DIAS_ANTIGUO
+
+def get_color_score(s):
+    if s >= 9: return COLOR_SCORE_TOP
+    if s >= 7: return COLOR_SCORE_ALTO
+    if s >= 5: return COLOR_SCORE_MED
+    return COLOR_SCORE_BAJO
+
+def build_meta_url(nombre: str, pais: str = "MX") -> str:
+    nombre_enc = nombre.replace(" ", "+")
+    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={nombre_enc}"
 
 def connect_sheet():
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
     if not creds_json:
         raise ValueError("GOOGLE_CREDENTIALS_JSON no definida")
-    creds = Credentials.from_service_account_info(
-        json.loads(creds_json), scopes=SCOPES
-    )
+    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
     gc = gspread.authorize(creds)
     return gc.open_by_key(SHEET_ID)
 
-# ── Función principal ──────────────────────────────────────────────
-async def save_to_sheets(
-    winners:   list,
-    rejected:  list,
-    log_lines: list,
-    config:    dict,
-):
-    print(f"📊 [REPORTER] Conectando a Google Sheets...")
+def get_or_create_tab(sheet, name, headers):
+    try:
+        ws = sheet.worksheet(name)
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(name, rows=2000, cols=max(len(headers), 10))
+        ws.append_row(headers)
+        ws.format("1:1", {"textFormat": {"bold": True}})
+    if not ws.get_all_values():
+        ws.append_row(headers)
+    return ws
 
+async def save_to_sheets(winners, rejected, log_lines, config):
+    print("📊 [REPORTER] Conectando a Google Sheets...")
     try:
         sheet = connect_sheet()
     except Exception as e:
-        print(f"⚠️  [REPORTER] No se pudo conectar: {e}")
+        print(f"⚠️  [REPORTER] Error: {e}")
         return
 
-    tab_names = config.get("sheets", {})
-    tab_winners    = tab_names.get("tab_winners",      "Ganadores")
+    tab_names       = config.get("sheets", {})
+    tab_winners     = tab_names.get("tab_winners",     "Ganadores")
     tab_descartados = tab_names.get("tab_descartados", "Descartados")
-    tab_log        = tab_names.get("tab_log",           "Log diario")
-
-    now = datetime.now()
+    tab_log         = tab_names.get("tab_log",         "Log diario")
+    now   = datetime.now()
     today = now.strftime("%Y-%m-%d %H:%M")
 
-    # ── Pestaña Ganadores ──────────────────────────────────────────
+    # ── Ganadores ──────────────────────────────────────────────────
     ws_win = get_or_create_tab(sheet, tab_winners, HEADERS_WINNERS)
     if winners:
-        rows_win = []
-        for p in winners:
-            señales_drop  = ", ".join(p.get("señales_dropshipping", []))
-            señales_marca = ", ".join(p.get("señales_marca_real", []))
+        existing  = ws_win.get_all_values()
+        start_row = len(existing) + 1
+        rows_win  = []
+        fmt_reqs  = []
+
+        for i, p in enumerate(winners):
+            dias  = int(p.get("dias_activo", 30))
+            score = int(p.get("score", 5))
+            nombre_anunciante = p.get("nombre_anunciante", p.get("marca", ""))
+            pais_origen       = p.get("pais_origen", "MX")
+            url_meta          = build_meta_url(nombre_anunciante, pais_origen)
+
             rows_win.append([
                 today,
                 p.get("nombre", ""),
                 p.get("marca", ""),
                 p.get("categoria", ""),
+                nombre_anunciante,
+                url_meta,
                 p.get("tipo_anuncio", ""),
-                señales_drop,
-                señales_marca,
-                p.get("calidad_contenido", ""),
-                p.get("dias_activo", ""),
+                score,
+                dias,
                 p.get("gasto_dia", ""),
                 p.get("variaciones", ""),
                 ", ".join(p.get("paises", [])),
@@ -118,52 +133,54 @@ async def save_to_sheets(
                 p.get("angulo_venta", ""),
                 p.get("por_que_ganador", ""),
                 "Sí" if p.get("tendencia") else "No",
-                p.get("score", ""),
-                p.get("nombre_anunciante", ""),
-                p.get("url_anunciante", ""),
+                p.get("calidad_contenido", ""),
+                ", ".join(p.get("señales_dropshipping", [])),
+                ", ".join(p.get("señales_marca_real", [])),
                 p.get("keyword_origen", ""),
-                p.get("pais_origen", ""),
+                pais_origen,
             ])
-        ws_win.append_rows(rows_win, value_input_option="USER_ENTERED")
-        print(f"📊 [REPORTER] {len(rows_win)} ganadores añadidos a '{tab_winners}'")
 
-    # ── Pestaña Descartados ────────────────────────────────────────
+            sr = start_row + i
+            # Color días (col I = índice 8)
+            fmt_reqs.append({"repeatCell": {"range": {
+                "sheetId": ws_win.id,
+                "startRowIndex": sr-1, "endRowIndex": sr,
+                "startColumnIndex": 8, "endColumnIndex": 9},
+                "cell": {"userEnteredFormat": {"backgroundColor": get_color_dias(dias)}},
+                "fields": "userEnteredFormat.backgroundColor"}})
+            # Color score (col H = índice 7)
+            fmt_reqs.append({"repeatCell": {"range": {
+                "sheetId": ws_win.id,
+                "startRowIndex": sr-1, "endRowIndex": sr,
+                "startColumnIndex": 7, "endColumnIndex": 8},
+                "cell": {"userEnteredFormat": {"backgroundColor": get_color_score(score)}},
+                "fields": "userEnteredFormat.backgroundColor"}})
+
+        ws_win.append_rows(rows_win, value_input_option="USER_ENTERED")
+        if fmt_reqs:
+            sheet.batch_update({"requests": fmt_reqs})
+        print(f"📊 [REPORTER] {len(rows_win)} ganadores añadidos con colores")
+
+    # ── Descartados ────────────────────────────────────────────────
     ws_rej = get_or_create_tab(sheet, tab_descartados, HEADERS_REJECTED)
     if rejected:
-        rows_rej = []
-        for p in rejected:
-            rows_rej.append([
-                today,
-                p.get("nombre", ""),
-                p.get("marca", ""),
-                p.get("categoria", ""),
-                p.get("rechazo_motivo", ""),
-                p.get("rechazo_categoria", ""),
-                p.get("tipo_anuncio", ""),
-                p.get("score", ""),
-                p.get("keyword_origen", ""),
-            ])
+        rows_rej = [[
+            today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
+            p.get("rechazo_motivo",""), p.get("rechazo_categoria",""),
+            p.get("tipo_anuncio",""), p.get("score",""), p.get("keyword_origen",""),
+        ] for p in rejected]
         ws_rej.append_rows(rows_rej, value_input_option="USER_ENTERED")
-        print(f"📊 [REPORTER] {len(rows_rej)} descartados añadidos a '{tab_descartados}'")
+        print(f"📊 [REPORTER] {len(rows_rej)} descartados añadidos")
 
-    # ── Pestaña Log ────────────────────────────────────────────────
+    # ── Log ────────────────────────────────────────────────────────
     ws_log = get_or_create_tab(sheet, tab_log, HEADERS_LOG)
-
-    # Extraer métricas del log
-    scrapeados = next((l for l in log_lines if "scrapeados" in l), "")
-    analizados = next((l for l in log_lines if "potenciales" in l), "")
-    tipos_str  = next((l for l in log_lines if "Tipos aprobados" in l), "")
-    keywords_str = next((l for l in log_lines if "Keywords usadas" in l), "")
-
     ws_log.append_row([
-        now.strftime("%Y-%m-%d"),
-        now.strftime("%H:%M"),
-        keywords_str.replace("Keywords usadas: ", "")[:200],
-        scrapeados,
-        analizados,
-        len(winners),
-        len(rejected),
-        tipos_str.replace("Tipos aprobados: ", ""),
+        now.strftime("%Y-%m-%d"), now.strftime("%H:%M"),
+        next((l.replace("Keywords usadas: ","") for l in log_lines if "Keywords" in l), "")[:200],
+        next((l for l in log_lines if "scrapeados" in l), ""),
+        next((l for l in log_lines if "potenciales" in l), ""),
+        len(winners), len(rejected),
+        next((l.replace("Tipos aprobados: ","") for l in log_lines if "Tipos" in l), ""),
         " | ".join(log_lines[-3:]),
     ])
-    print(f"📊 [REPORTER] Log diario actualizado en '{tab_log}'")
+    print("📊 [REPORTER] Log actualizado")
