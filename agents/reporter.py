@@ -1,8 +1,10 @@
 """
-REPORTER v3 — Google Sheets con:
-  - Enlace directo a Meta Ads Library del anunciante
-  - Colores por días activo (verde=fresquísimo, amarillo=reciente, naranja=moderado)
-  - Colores por score
+REPORTER v4 — 5 pestañas en Google Sheets:
+  - Ganadores        : con colores por días y score
+  - Top 4 del día    : análisis profundo de los 4 mejores
+  - Competidores     : análisis de tiendas web rivales
+  - Descartados      : rechazados con motivo
+  - Log diario       : historial de ejecuciones
 """
 import os, json
 from datetime import datetime
@@ -13,7 +15,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-
 SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
 HEADERS_WINNERS = [
@@ -23,55 +24,70 @@ HEADERS_WINNERS = [
     "Gasto/día (USD)", "Variaciones", "Países",
     "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
     "Ángulo de venta", "Por qué es ganador", "Tendencia",
-    "Calidad /10", "Señales dropshipping", "Señales marca real",
-    "Keyword origen", "País origen",
+    "Calidad /10", "Señales dropshipping", "Keyword origen",
 ]
 
-HEADERS_REJECTED = [
+HEADERS_TOP = [
+    "Fecha", "Posición", "Producto", "Marca", "Score /10", "Días activo",
+    "Por qué funciona", "Tipo creative probable", "Copy probable",
+    "Audiencia probable", "Estrategia de escalado",
+    "Cómo replicarlo", "Ángulos alternativos",
+    "Productos complementarios", "Riesgo saturación",
+    "Ventana de oportunidad", "Replicabilidad /10",
+    "Ver anuncios en Meta",
+]
+
+HEADERS_COMP = [
+    "Fecha", "Anunciante", "Producto origen", "Score origen",
+    "URL tienda", "Plataforma", "Catálogo estimado", "Rango precios",
+    "Tiempo anunciando", "Presupuesto mensual (USD)",
+    "Estrategia principal", "Puntos fuertes", "Puntos débiles",
+    "Oportunidad para ti", "Productos más anunciados",
+    "Nivel amenaza", "Recomendación",
+]
+
+HEADERS_REJ = [
     "Fecha", "Producto", "Marca", "Categoría",
-    "Motivo rechazo", "Categoría rechazo",
-    "Tipo anuncio", "Score", "Keyword origen",
+    "Motivo rechazo", "Categoría rechazo", "Tipo", "Score", "Keyword",
 ]
 
 HEADERS_LOG = [
-    "Fecha", "Hora", "Keywords",
-    "Scrapeados", "Analizados", "Aprobados", "Descartados",
-    "Tipos", "Notas",
+    "Fecha", "Hora", "Keywords", "Scrapeados", "Analizados",
+    "Aprobados", "Descartados", "Top ads", "Competidores", "Tipos", "Notas",
 ]
 
-COLOR_DIAS_FRESCO   = {"red": 0.565, "green": 0.933, "blue": 0.565}  # verde  ≤7d
-COLOR_DIAS_RECIENTE = {"red": 0.984, "green": 0.933, "blue": 0.459}  # amarillo 8-15d
-COLOR_DIAS_MODERADO = {"red": 1.0,   "green": 0.737, "blue": 0.318}  # naranja 16-25d
-COLOR_DIAS_ANTIGUO  = {"red": 0.957, "green": 0.490, "blue": 0.490}  # rojo >25d
+# ── Colores ─────────────────────────────────────────────────────
+C_VERDE_OSC = {"red": 0.204, "green": 0.780, "blue": 0.349}
+C_VERDE     = {"red": 0.565, "green": 0.933, "blue": 0.565}
+C_AMARILLO  = {"red": 0.984, "green": 0.933, "blue": 0.459}
+C_NARANJA   = {"red": 1.0,   "green": 0.737, "blue": 0.318}
+C_ROJO      = {"red": 0.957, "green": 0.490, "blue": 0.490}
+C_AZUL      = {"red": 0.678, "green": 0.847, "blue": 0.902}
 
-COLOR_SCORE_TOP  = {"red": 0.204, "green": 0.780, "blue": 0.349}  # verde oscuro 9-10
-COLOR_SCORE_ALTO = {"red": 0.565, "green": 0.933, "blue": 0.565}  # verde claro  7-8
-COLOR_SCORE_MED  = {"red": 0.984, "green": 0.933, "blue": 0.459}  # amarillo     5-6
-COLOR_SCORE_BAJO = {"red": 0.957, "green": 0.490, "blue": 0.490}  # rojo         <5
+def color_dias(d):
+    d = int(d) if str(d).isdigit() else 30
+    if d <= 7:  return C_VERDE
+    if d <= 15: return C_AMARILLO
+    if d <= 25: return C_NARANJA
+    return C_ROJO
 
-def get_color_dias(d):
-    if d <= 7:  return COLOR_DIAS_FRESCO
-    if d <= 15: return COLOR_DIAS_RECIENTE
-    if d <= 25: return COLOR_DIAS_MODERADO
-    return COLOR_DIAS_ANTIGUO
+def color_score(s):
+    s = int(s) if str(s).isdigit() else 5
+    if s >= 9: return C_VERDE_OSC
+    if s >= 7: return C_VERDE
+    if s >= 5: return C_AMARILLO
+    return C_ROJO
 
-def get_color_score(s):
-    if s >= 9: return COLOR_SCORE_TOP
-    if s >= 7: return COLOR_SCORE_ALTO
-    if s >= 5: return COLOR_SCORE_MED
-    return COLOR_SCORE_BAJO
+def color_amenaza(nivel):
+    return {"alto": C_ROJO, "medio": C_AMARILLO, "bajo": C_VERDE}.get(nivel.lower(), C_AMARILLO)
 
-def build_meta_url(nombre: str, pais: str = "MX") -> str:
-    nombre_enc = nombre.replace(" ", "+")
-    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={nombre_enc}"
+def build_meta_url(nombre, pais="MX"):
+    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={nombre.replace(' ', '+')}"
 
 def connect_sheet():
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
-    if not creds_json:
-        raise ValueError("GOOGLE_CREDENTIALS_JSON no definida")
-    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
-    gc = gspread.authorize(creds)
-    return gc.open_by_key(SHEET_ID)
+    creds = Credentials.from_service_account_info(
+        json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"]), scopes=SCOPES)
+    return gspread.authorize(creds).open_by_key(SHEET_ID)
 
 def get_or_create_tab(sheet, name, headers):
     try:
@@ -84,103 +100,136 @@ def get_or_create_tab(sheet, name, headers):
         ws.append_row(headers)
     return ws
 
-async def save_to_sheets(winners, rejected, log_lines, config):
-    print("📊 [REPORTER] Conectando a Google Sheets...")
+def color_cell(ws_id, row, col_start, col_end, color):
+    return {"repeatCell": {"range": {
+        "sheetId": ws_id,
+        "startRowIndex": row-1, "endRowIndex": row,
+        "startColumnIndex": col_start, "endColumnIndex": col_end},
+        "cell": {"userEnteredFormat": {"backgroundColor": color}},
+        "fields": "userEnteredFormat.backgroundColor"}}
+
+async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, config):
+    print("📊 [REPORTER] Conectando...")
     try:
         sheet = connect_sheet()
     except Exception as e:
-        print(f"⚠️  [REPORTER] Error: {e}")
-        return
+        print(f"⚠️  [REPORTER] Error: {e}"); return
 
-    tab_names       = config.get("sheets", {})
-    tab_winners     = tab_names.get("tab_winners",     "Ganadores")
-    tab_descartados = tab_names.get("tab_descartados", "Descartados")
-    tab_log         = tab_names.get("tab_log",         "Log diario")
-    now   = datetime.now()
-    today = now.strftime("%Y-%m-%d %H:%M")
+    cfg         = config.get("sheets", {})
+    now         = datetime.now()
+    today       = now.strftime("%Y-%m-%d %H:%M")
+    fmt_reqs    = []
 
-    # ── Ganadores ──────────────────────────────────────────────────
-    ws_win = get_or_create_tab(sheet, tab_winners, HEADERS_WINNERS)
+    # ── 1. GANADORES ──────────────────────────────────────────────
+    ws_win = get_or_create_tab(sheet, cfg.get("tab_winners", "Ganadores"), HEADERS_WINNERS)
     if winners:
-        existing  = ws_win.get_all_values()
-        start_row = len(existing) + 1
-        rows_win  = []
-        fmt_reqs  = []
-
+        start = len(ws_win.get_all_values()) + 1
+        rows  = []
         for i, p in enumerate(winners):
-            dias  = int(p.get("dias_activo", 30))
-            score = int(p.get("score", 5))
-            nombre_anunciante = p.get("nombre_anunciante", p.get("marca", ""))
-            pais_origen       = p.get("pais_origen", "MX")
-            url_meta          = build_meta_url(nombre_anunciante, pais_origen)
-
-            rows_win.append([
-                today,
-                p.get("nombre", ""),
-                p.get("marca", ""),
-                p.get("categoria", ""),
-                nombre_anunciante,
-                url_meta,
-                p.get("tipo_anuncio", ""),
-                score,
-                dias,
-                p.get("gasto_dia", ""),
-                p.get("variaciones", ""),
-                ", ".join(p.get("paises", [])),
-                p.get("precio_venta_mxn", ""),
-                p.get("costo_estimado_mxn", ""),
-                p.get("margen_pct", ""),
-                p.get("angulo_venta", ""),
-                p.get("por_que_ganador", ""),
+            dias  = p.get("dias_activo", 30)
+            score = p.get("score", 5)
+            anun  = p.get("nombre_anunciante", p.get("marca", ""))
+            pais  = p.get("pais_origen", "MX")
+            rows.append([
+                today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
+                anun, build_meta_url(anun, pais),
+                p.get("tipo_anuncio",""), score, dias,
+                p.get("gasto_dia",""), p.get("variaciones",""),
+                ", ".join(p.get("paises",[])),
+                p.get("precio_venta_mxn",""), p.get("costo_estimado_mxn",""), p.get("margen_pct",""),
+                p.get("angulo_venta",""), p.get("por_que_ganador",""),
                 "Sí" if p.get("tendencia") else "No",
-                p.get("calidad_contenido", ""),
-                ", ".join(p.get("señales_dropshipping", [])),
-                ", ".join(p.get("señales_marca_real", [])),
-                p.get("keyword_origen", ""),
-                pais_origen,
+                p.get("calidad_contenido",""),
+                ", ".join(p.get("señales_dropshipping",[])),
+                p.get("keyword_origen",""),
             ])
+            sr = start + i
+            fmt_reqs.append(color_cell(ws_win.id, sr, 8, 9, color_score(score)))   # col H score
+            fmt_reqs.append(color_cell(ws_win.id, sr, 7, 8, color_dias(dias)))     # col I días — índice ajustado
+        ws_win.append_rows(rows, value_input_option="USER_ENTERED")
+        print(f"📊 {len(rows)} ganadores añadidos")
 
-            sr = start_row + i
-            # Color días (col I = índice 8)
-            fmt_reqs.append({"repeatCell": {"range": {
-                "sheetId": ws_win.id,
-                "startRowIndex": sr-1, "endRowIndex": sr,
-                "startColumnIndex": 8, "endColumnIndex": 9},
-                "cell": {"userEnteredFormat": {"backgroundColor": get_color_dias(dias)}},
-                "fields": "userEnteredFormat.backgroundColor"}})
-            # Color score (col H = índice 7)
-            fmt_reqs.append({"repeatCell": {"range": {
-                "sheetId": ws_win.id,
-                "startRowIndex": sr-1, "endRowIndex": sr,
-                "startColumnIndex": 7, "endColumnIndex": 8},
-                "cell": {"userEnteredFormat": {"backgroundColor": get_color_score(score)}},
-                "fields": "userEnteredFormat.backgroundColor"}})
+    # ── 2. TOP 4 DEL DÍA ─────────────────────────────────────────
+    ws_top = get_or_create_tab(sheet, "Top 4 del día", HEADERS_TOP)
+    if top_ads:
+        start = len(ws_top.get_all_values()) + 1
+        rows  = []
+        for i, p in enumerate(top_ads):
+            anun  = p.get("nombre_anunciante", p.get("marca",""))
+            pais  = p.get("pais_origen","MX")
+            score = p.get("score", 5)
+            rows.append([
+                today, i+1,
+                p.get("nombre",""), p.get("marca",""), score, p.get("dias_activo",""),
+                p.get("por_que_funciona",""),
+                p.get("tipo_creative_probable",""),
+                p.get("copy_probable",""),
+                p.get("audiencia_probable",""),
+                p.get("estrategia_escalado",""),
+                p.get("como_replicarlo",""),
+                " | ".join(p.get("angulos_alternativos",[])),
+                " | ".join(p.get("productos_complementarios",[])),
+                p.get("riesgo_saturacion",""),
+                p.get("ventana_oportunidad",""),
+                p.get("puntuacion_replicabilidad",""),
+                build_meta_url(anun, pais),
+            ])
+            sr = start + i
+            fmt_reqs.append(color_cell(ws_top.id, sr, 4, 5, color_score(score)))
+        ws_top.append_rows(rows, value_input_option="USER_ENTERED")
+        print(f"📊 {len(rows)} top ads añadidos")
 
-        ws_win.append_rows(rows_win, value_input_option="USER_ENTERED")
-        if fmt_reqs:
-            sheet.batch_update({"requests": fmt_reqs})
-        print(f"📊 [REPORTER] {len(rows_win)} ganadores añadidos con colores")
+    # ── 3. COMPETIDORES ───────────────────────────────────────────
+    ws_comp = get_or_create_tab(sheet, "Competidores", HEADERS_COMP)
+    if competitors:
+        start = len(ws_comp.get_all_values()) + 1
+        rows  = []
+        for i, c in enumerate(competitors):
+            amenaza = c.get("nivel_amenaza","medio")
+            rows.append([
+                today,
+                c.get("anunciante",""), c.get("producto_origen",""), c.get("score_origen",""),
+                c.get("url_tienda",""), c.get("plataforma_tienda",""),
+                c.get("catalogo_estimado",""), c.get("rango_precios",""),
+                c.get("tiempo_anunciando",""), c.get("presupuesto_mensual_estimado",""),
+                c.get("estrategia_principal",""),
+                " | ".join(c.get("puntos_fuertes",[])),
+                " | ".join(c.get("puntos_debiles",[])),
+                c.get("oportunidad_para_ti",""),
+                " | ".join(c.get("productos_mas_anunciados",[])),
+                amenaza,
+                c.get("recomendacion",""),
+            ])
+            sr = start + i
+            fmt_reqs.append(color_cell(ws_comp.id, sr, 15, 16, color_amenaza(amenaza)))
+        ws_comp.append_rows(rows, value_input_option="USER_ENTERED")
+        print(f"📊 {len(rows)} competidores añadidos")
 
-    # ── Descartados ────────────────────────────────────────────────
-    ws_rej = get_or_create_tab(sheet, tab_descartados, HEADERS_REJECTED)
+    # ── 4. DESCARTADOS ────────────────────────────────────────────
+    ws_rej = get_or_create_tab(sheet, cfg.get("tab_descartados","Descartados"), HEADERS_REJ)
     if rejected:
-        rows_rej = [[
-            today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
-            p.get("rechazo_motivo",""), p.get("rechazo_categoria",""),
-            p.get("tipo_anuncio",""), p.get("score",""), p.get("keyword_origen",""),
-        ] for p in rejected]
-        ws_rej.append_rows(rows_rej, value_input_option="USER_ENTERED")
-        print(f"📊 [REPORTER] {len(rows_rej)} descartados añadidos")
+        rows = [[today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
+                 p.get("rechazo_motivo",""), p.get("rechazo_categoria",""),
+                 p.get("tipo_anuncio",""), p.get("score",""), p.get("keyword_origen","")]
+                for p in rejected]
+        ws_rej.append_rows(rows, value_input_option="USER_ENTERED")
+        print(f"📊 {len(rows)} descartados añadidos")
 
-    # ── Log ────────────────────────────────────────────────────────
-    ws_log = get_or_create_tab(sheet, tab_log, HEADERS_LOG)
+    # ── 5. LOG ────────────────────────────────────────────────────
+    ws_log = get_or_create_tab(sheet, cfg.get("tab_log","Log diario"), HEADERS_LOG)
     ws_log.append_row([
         now.strftime("%Y-%m-%d"), now.strftime("%H:%M"),
-        next((l.replace("Keywords usadas: ","") for l in log_lines if "Keywords" in l), "")[:200],
-        next((l for l in log_lines if "scrapeados" in l), ""),
-        next((l for l in log_lines if "potenciales" in l), ""),
-        len(winners), len(rejected),
-        next((l.replace("Tipos aprobados: ","") for l in log_lines if "Tipos" in l), ""),
-        " | ".join(log_lines[-3:]),
+        next((l.replace("Keywords usadas: ","") for l in log_lines if "Keywords" in l),"")[:150],
+        next((l for l in log_lines if "scrapeados" in l),""),
+        next((l for l in log_lines if "potenciales" in l),""),
+        len(winners), len(rejected), len(top_ads), len(competitors),
+        next((l.replace("Tipos aprobados: ","") for l in log_lines if "Tipos" in l),""),
+        " | ".join(log_lines[-2:]),
     ])
-    print("📊 [REPORTER] Log actualizado")
+
+    # ── Aplicar todos los colores de una vez ──────────────────────
+    if fmt_reqs:
+        sheet.batch_update({"requests": fmt_reqs})
+        print(f"📊 {len(fmt_reqs)} formatos de color aplicados")
+
+    print("✅ [REPORTER] Todo guardado en Google Sheets")
