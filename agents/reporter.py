@@ -155,14 +155,14 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
                 p.get("nombre",""),
                 anun,
                 p.get("categoria",""),
-                # LINK 1: Snapshot directo al anuncio específico (el más directo)
+                # LINK 1: Snapshot directo al anuncio (viene directo de la API)
                 p.get("snapshot_url") or p.get("ad_url",""),
-                # LINK 2: Página Meta Ads con view_all_page_id (todos los anuncios de esa página)
-                p.get("url_meta_ads") or p.get("url_anunciante") or build_meta_url(anun, pais),
-                # LINK 3: Web del comercio
-                p.get("url_web",""),
-                # TEXTO REAL del anuncio para buscarlo manualmente
-                p.get("raw_text", p.get("texto_anuncio",""))[:300],
+                # LINK 2: Todos los anuncios de esa página (view_all_page_id si tenemos page_id)
+                p.get("page_url") or p.get("url_meta_ads") or build_meta_url(anun, pais),
+                # LINK 3: Web del comercio (del caption del anuncio)
+                p.get("website_url") or p.get("url_web",""),
+                # TEXTO REAL del anuncio tal como aparece en Meta Ads
+                p.get("raw_text","")[:400],
                 score,
                 p.get("score_dropshipping", p.get("score","")),
                 dias,

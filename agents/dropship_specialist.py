@@ -1,189 +1,180 @@
 """
-DROPSHIP SPECIALIST — Agente especialista en detectar productos de dropshipping chino
-Aprende cada día nuevos patrones y señales de productos dropshippables.
-Identifica: productos de AliExpress, Temu, proveedores chinos/turcos vendidos en Europa.
+DROPSHIP SPECIALIST v2 — Puntúa y filtra anuncios reales directamente
+No genera objetos nuevos. Trabaja con los datos reales de la API.
+Preserva: raw_text, snapshot_url, page_url, website_url, page_name — todo intacto.
 """
 import os, json
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-# Señales conocidas de dropshipping chino — se expanden con el aprendizaje diario
-DROPSHIP_SIGNALS = {
-    "copy_signals": [
-        "limited stock", "stock limitado", "oferta por tiempo limitado",
-        "envío gratuito", "free shipping", "50% off", "70% descuento",
-        "as seen on", "viral", "trending", "solo hoy", "últimas unidades",
-        "compra ahora", "buy now", "agotándose", "selling fast",
-        "satisfacción garantizada", "devolución fácil", "30 day return",
-        "miles de clientes", "thousands of customers", "#1 bestseller",
-    ],
-    "price_signals": [
-        # Precios bajos para moda de calidad media → margen alto
-        "€15", "€19", "€24", "€29", "€34", "€39",
-        "19.99", "24.99", "29.99", "34.99", "39.99",
-    ],
-    "supplier_signals": [
-        "ships from", "envío desde", "warehouse", "almacén",
-        "procesamiento 2-5 días", "entrega 7-15 días",
-        "hecho a mano", "handmade", "artesanal",  # A veces usado para esconder origen
-    ],
-    "brand_signals": [
-        # Nombres de marcas genéricas típicas de dropshipping
-        "fashion", "style", "boutique", "wear", "chic", "glam", "look",
-        "collection", "studio", "store", "shop", "house", "by",
-    ]
-}
+# Marcas grandes — solo referencia, se excluyen del sheet
+BIG_BRANDS = [
+    "zara", "mango", "h&m", "hm", "asos", "shein", "massimo dutti",
+    "reserved", "sandro", "cos ", " cos", "reformation", "house of cb",
+    "ever pretty", "lipsy", "pull&bear", "bershka", "stradivarius",
+    "arket", "weekday", "primark", "uniqlo", "nike ", "adidas",
+    "levi", "guess", "calvin klein", "tommy", "ralph lauren",
+    "michael kors", "zara.com", "mango.com"
+]
 
-# Proveedores conocidos de dropshipping de moda para mujer
-KNOWN_SUPPLIERS = [
-    "AliExpress (moda mujer, buscar misma imagen)",
-    "Temu (categoría women's clothing)",
-    "CJDropshipping (vestidos y conjuntos)",
-    "Zendrop (moda europea)",
-    "Spocket (proveedores europeos y americanos)",
-    "Modalyst (moda premium dropshipping)",
-    "Printful (si es ropa con estampados)",
-    "HUSTLE GOT REAL (proveedor UK-Europa)",
-    "Alibaba (buscar fabricante directo)",
+# Señales de dropshipping chino / producto replicable
+DROPSHIP_SIGNALS = [
+    "limited stock", "stock limitado", "oferta", "descuento",
+    "envío gratis", "free shipping", "50% off", "70% off",
+    "as seen on", "viral", "trending", "solo hoy", "últimas unidades",
+    "compra ahora", "buy now", "selling fast", "miles de clientes",
+    "satisfacción garantizada", "30 day return", "devolución gratis",
+    "fashion", "boutique", "store", "shop", "outlet", "collection",
+    "wear", "style", "chic", "glam", "look", "studio"
 ]
 
 
-def score_dropship_probability(ad_text: str, page_name: str) -> tuple[int, list]:
-    """
-    Puntúa la probabilidad de que sea dropshipping chino (0-10)
-    Devuelve (score, señales_detectadas)
-    """
-    text = (ad_text + " " + page_name).lower()
-    signals_found = []
-    score = 5  # Base neutral
+def is_big_brand(page_name: str, raw_text: str) -> bool:
+    combined = (page_name + " " + raw_text[:100]).lower()
+    return any(b in combined for b in BIG_BRANDS)
 
-    # Señales positivas de dropshipping
-    for signal in DROPSHIP_SIGNALS["copy_signals"]:
-        if signal.lower() in text:
-            signals_found.append(f"copy: '{signal}'")
-            score += 0.5
 
-    for signal in DROPSHIP_SIGNALS["supplier_signals"]:
-        if signal.lower() in text:
-            signals_found.append(f"supplier: '{signal}'")
-            score += 1
+def dropship_score(ad: dict) -> tuple:
+    """Puntúa de 0-10 la probabilidad de que sea dropshipping replicable."""
+    text = (ad.get("raw_text", "") + " " + ad.get("page_name", "")).lower()
+    signals = []
+    score = 4
 
-    for signal in DROPSHIP_SIGNALS["brand_signals"]:
-        if signal.lower() in page_name.lower():
-            signals_found.append(f"brand genérica: '{signal}'")
-            score += 0.3
-
-    # Señales negativas (marca real establecida)
-    established_signals = ["official", "oficial", "®", "™", "since 19", "since 20",
-                          "founded in", "est.", "flagship"]
-    for sig in established_signals:
+    # Señales positivas
+    for sig in DROPSHIP_SIGNALS:
         if sig.lower() in text:
-            score -= 2
-            break
+            signals.append(sig)
+            score += 0.4
 
-    return min(10, max(0, round(score))), signals_found[:5]
+    # Buen gasto = está funcionando
+    gasto = ad.get("gasto_dia_est", 0) or 0
+    if gasto >= 50:  score += 2
+    elif gasto >= 20: score += 1
+
+    # Días activo óptimos (entre 3 y 45 días = tendencia activa)
+    dias = ad.get("dias_activo", 0) or 0
+    if 3 <= dias <= 45: score += 1.5
+    elif dias <= 2:     score += 1  # Muy nuevo = oportunidad temprana
+
+    # Penalización si es marca grande
+    if is_big_brand(ad.get("page_name",""), ad.get("raw_text","")):
+        score -= 5
+
+    return min(10, max(0, round(score))), signals[:4]
 
 
 async def analyze_dropship_opportunities(raw_ads: list, trend_context: dict = None) -> list:
     """
-    Analiza anuncios y detecta oportunidades de dropshipping.
-    Devuelve lista de productos dropshippables con análisis completo.
+    Filtra y puntúa los anuncios reales. Devuelve los mejores directamente
+    con todos sus datos originales intactos (raw_text, snapshot_url, etc.)
     """
-    print(f"🛒 [DROPSHIP] Analizando {len(raw_ads)} anuncios en busca de oportunidades...")
+    print(f"🛒 [DROPSHIP] Evaluando {len(raw_ads)} anuncios...")
 
-    # Pre-filtrar: solo anuncios con alta probabilidad de dropshipping
-    candidates = []
+    # Puntuar y filtrar todos los anuncios
+    scored = []
     for ad in raw_ads:
-        ds_score, signals = score_dropship_probability(
-            ad.get("raw_text", ""), ad.get("page_name", ""))
-        if ds_score >= 5:  # Solo los que tienen señales de dropshipping
-            ad["dropship_pre_score"] = ds_score
-            ad["dropship_signals_pre"] = signals
-            candidates.append(ad)
+        # Saltar marcas grandes
+        if is_big_brand(ad.get("page_name",""), ad.get("raw_text","")):
+            continue
 
-    print(f"🛒 [DROPSHIP] {len(candidates)} candidatos con señales de dropshipping")
+        score, signals = dropship_score(ad)
+        if score >= 4:
+            ad_copy = dict(ad)  # Copia para no modificar el original
+            ad_copy["dropship_score_pre"] = score
+            ad_copy["señales_detectadas"] = signals
+            scored.append(ad_copy)
 
-    if not candidates:
-        candidates = raw_ads[:20]  # Usar todos si no hay candidatos claros
+    # Ordenar por score y tomar los mejores
+    scored.sort(key=lambda x: x["dropship_score_pre"], reverse=True)
+    top_ads = scored[:25]
 
-    # Construir contexto para Claude
+    if not top_ads:
+        print("🛒 [DROPSHIP] Sin candidatos pre-filtro, usando todos")
+        top_ads = raw_ads[:20]
+
+    print(f"🛒 [DROPSHIP] {len(top_ads)} candidatos tras pre-filtro, analizando con IA...")
+
+    # Ahora Claude analiza solo los mejores para enriquecerlos
     ads_ctx = ""
-    for i, ad in enumerate(candidates[:25]):
+    for i, ad in enumerate(top_ads[:20]):
         ads_ctx += f"""
---- Anuncio {i+1} ---
-Página: {ad.get('page_name','')} | País: {ad.get('country','')} | Días activo: {ad.get('dias_activo',0)}
-Gasto/día est.: ${ad.get('gasto_dia_est',0)} USD | Señales DS pre-detectadas: {ad.get('dropship_signals_pre',[])}
-Texto: {ad.get('raw_text','')[:250]}
-Web detectada: {ad.get('website_url','')}
+[{i+1}] Página: {ad.get('page_name','')} | País: {ad.get('country','')} | Días: {ad.get('dias_activo',0)} | Gasto/día: ${ad.get('gasto_dia_est',0)}
+Texto: {ad.get('raw_text','')[:200]}
 """
 
     trend_ctx = ""
     if trend_context:
-        trend_ctx = f"""
-ESTILOS EN TENDENCIA AHORA EN EUROPA (referencia de marcas grandes):
-- {', '.join(trend_context.get('estilos_trending', []))}
-- Oportunidad: {trend_context.get('oportunidad_dropship', '')}
-"""
+        trend_ctx = f"Tendencias Europa ahora: {', '.join(trend_context.get('estilos_trending',[]))}"
 
-    prompt = f"""Eres un EXPERTO ABSOLUTO en dropshipping de moda femenina europea. Llevas años identificando productos de proveedores chinos (AliExpress, Temu, CJ, Spocket) que se venden con marca propia en Europa con márgenes de 200-400%.
+    prompt = f"""Eres experto en dropshipping de moda femenina europea. {trend_ctx}
 
-Tu misión hoy: analizar estos anuncios de Meta Ads en Europa y encontrar los mejores productos para hacer dropshipping de moda femenina elegante (vestidos, conjuntos, monos).
+Analiza estos anuncios y para cada uno que sea una oportunidad de dropshipping devuelve:
+- nombre_producto: descripción del producto (vestido midi negro satén, conjunto blazer beige, etc.)
+- categoria: vestido midi / conjunto / mono / blazer / etc.
+- precio_venta_eur: precio estimado de venta en euros
+- costo_proveedor_eur: coste estimado del proveedor (AliExpress/Temu)
+- margen_pct: margen estimado en %
+- angulo_venta: qué hace que este anuncio funcione (5-8 palabras)
+- como_encontrar_proveedor: qué buscar exactamente en AliExpress/Temu para encontrarlo
+- por_que_oportunidad: por qué es una buena oportunidad (10-15 palabras)
+- score_oportunidad: 1-10
+- indice: el número [X] del anuncio
 
-{trend_ctx}
-
-ANUNCIOS A ANALIZAR:
+ANUNCIOS:
 {ads_ctx}
 
-Para cada oportunidad detectada, indica:
-- Qué señales te dicen que es dropshipping (copy genérico, precio inflado, sin marca real, imágenes de stock, etc.)
-- Dónde encontrar el proveedor
-- Cuánto costaría el producto en origen
-
-Devuelve un array JSON con las mejores oportunidades:
-[{{
-  "nombre": "descripción del producto (ej: Vestido midi drapeado satén negro con abertura)",
-  "marca_anunciante": "nombre de la tienda/página en Facebook",
-  "categoria": "vestido midi / conjunto dos piezas / etc.",
-  "dias_activo": número,
-  "gasto_dia_usd": número estimado,
-  "pais": "ES/IT/FR/etc.",
-  "precio_venta_eur": número,
-  "costo_proveedor_eur": número estimado coste AliExpress/Temu,
-  "margen_pct": número,
-  "señales_dropshipping": ["señal 1", "señal 2", "señal 3"],
-  "proveedor_sugerido": "AliExpress / Temu / CJ / etc. — qué buscar exactamente",
-  "como_encontrar_proveedor": "busca en AliExpress: '[keywords exactas para buscar el mismo producto]'",
-  "angulo_venta": "propuesta de valor del anunciante que funciona",
-  "por_que_oportunidad": "razón concreta de 15-20 palabras",
-  "score_dropshipping": número 1-10,
-  "score_oportunidad": número 1-10,
-  "ganador": true si ambos scores >= 6
-}}]
-
-Solo JSON puro. Sin texto extra."""
+Solo los que sean dropshipping real (no marcas grandes registradas).
+Devuelve array JSON. Solo JSON puro."""
 
     try:
         r = client.messages.create(
             model="claude-opus-4-5",
-            max_tokens=5000,
+            max_tokens=3000,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = r.content[0].text.strip()
         s, e = raw.find("["), raw.rfind("]") + 1
-        products = json.loads(raw[s:e])
-        winners = [p for p in products if p.get("ganador") and p.get("score_oportunidad", 0) >= 6]
-        print(f"🛒 [DROPSHIP] {len(products)} analizados → {len(winners)} oportunidades reales")
-        return winners
+        enriched = json.loads(raw[s:e])
+
+        # Fusionar análisis de Claude CON los datos originales del anuncio (nunca los perdemos)
+        results = []
+        for item in enriched:
+            idx = item.get("indice", 1) - 1
+            if 0 <= idx < len(top_ads):
+                original = dict(top_ads[idx])  # Datos originales intactos
+                # Añadir análisis de Claude SIN sobreescribir datos originales
+                original["nombre"]               = item.get("nombre_producto", original.get("page_name",""))
+                original["categoria"]            = item.get("categoria","")
+                original["precio_venta_eur"]     = item.get("precio_venta_eur","")
+                original["costo_proveedor_eur"]  = item.get("costo_proveedor_eur","")
+                original["margen_pct"]           = item.get("margen_pct","")
+                original["angulo_venta"]         = item.get("angulo_venta","")
+                original["como_encontrar_proveedor"] = item.get("como_encontrar_proveedor","")
+                original["por_que_oportunidad"]  = item.get("por_que_oportunidad","")
+                original["score_oportunidad"]    = item.get("score_oportunidad", 6)
+                original["score"]                = item.get("score_oportunidad", 6)
+                original["ganador"]              = item.get("score_oportunidad", 0) >= 6
+                original["marca_anunciante"]     = original.get("page_name","")
+                original["nombre_anunciante"]    = original.get("page_name","")
+                original["keyword_origen"]       = original.get("keyword","")
+                original["pais"]                 = original.get("country","")
+                results.append(original)
+
+        print(f"🛒 [DROPSHIP] {len(results)} oportunidades de dropshipping encontradas")
+        return results
+
     except Exception as ex:
-        import re
-        print(f"⚠️  [DROPSHIP] Error JSON: {ex} — extrayendo individualmente...")
-        products = []
-        for match in re.finditer(r'\{[^{}]+\}', raw if 'raw' in dir() else "", re.DOTALL):
-            try:
-                p = json.loads(match.group())
-                if p.get("nombre"):
-                    products.append(p)
-            except Exception:
-                continue
-        return [p for p in products if p.get("score_oportunidad", 0) >= 6]
+        import re as re_mod
+        print(f"⚠️  [DROPSHIP] Error: {ex} — devolviendo top pre-filtrados")
+        # Si falla Claude, devolver los pre-filtrados con datos mínimos
+        for ad in top_ads[:10]:
+            ad["nombre"]           = ad.get("page_name","")
+            ad["categoria"]        = "moda mujer"
+            ad["score"]            = ad.get("dropship_score_pre", 5)
+            ad["ganador"]          = True
+            ad["marca_anunciante"] = ad.get("page_name","")
+            ad["nombre_anunciante"]= ad.get("page_name","")
+            ad["keyword_origen"]   = ad.get("keyword","")
+            ad["pais"]             = ad.get("country","")
+        return top_ads[:10]
