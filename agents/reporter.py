@@ -94,10 +94,21 @@ def get_or_create_tab(sheet, name, headers):
         ws = sheet.worksheet(name)
     except gspread.WorksheetNotFound:
         ws = sheet.add_worksheet(name, rows=2000, cols=max(len(headers), 10))
-        ws.append_row(headers)
+        ws.update("A1", [headers])
         ws.format("1:1", {"textFormat": {"bold": True}})
-    if not ws.get_all_values():
-        ws.append_row(headers)
+        return ws
+
+    # Si la pestaña existe, comprueba si los headers son correctos
+    existing = ws.get_all_values()
+    if not existing:
+        ws.update("A1", [headers])
+        ws.format("1:1", {"textFormat": {"bold": True}})
+    elif existing[0] != headers:
+        # Headers incorrectos → borra todo y reescribe con los correctos
+        ws.clear()
+        ws.update("A1", [headers])
+        ws.format("1:1", {"textFormat": {"bold": True}})
+        print(f"📊 [REPORTER] Headers de '{name}' actualizados")
     return ws
 
 def color_cell(ws_id, row, col_start, col_end, color):
