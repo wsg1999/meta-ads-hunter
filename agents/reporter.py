@@ -19,7 +19,8 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
 HEADERS_WINNERS = [
     "Fecha", "Producto", "Marca anunciante", "Categoría",
-    "🔗 Anuncio en Meta", "📘 Página Meta Ads", "🌐 Web del comercio",
+    "🔗 Snapshot anuncio", "📘 Todos los anuncios de la página", "🌐 Web del comercio",
+    "Texto real del anuncio",
     "Score /10", "Score Dropshipping", "Días activo", "Gasto/día (USD)",
     "País", "Precio venta (EUR)", "Costo proveedor (EUR)", "Margen %",
     "Señales dropshipping", "Cómo encontrar proveedor",
@@ -154,10 +155,14 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
                 p.get("nombre",""),
                 anun,
                 p.get("categoria",""),
-                # 3 LINKS:
-                p.get("ad_url",""),                                          # Anuncio directo
-                p.get("url_meta_ads") or p.get("url_anunciante") or build_meta_url(anun, pais),  # Página Meta Ads
-                p.get("url_web",""),                                         # Web del comercio
+                # LINK 1: Snapshot directo al anuncio específico (el más directo)
+                p.get("snapshot_url") or p.get("ad_url",""),
+                # LINK 2: Página Meta Ads con view_all_page_id (todos los anuncios de esa página)
+                p.get("url_meta_ads") or p.get("url_anunciante") or build_meta_url(anun, pais),
+                # LINK 3: Web del comercio
+                p.get("url_web",""),
+                # TEXTO REAL del anuncio para buscarlo manualmente
+                p.get("raw_text", p.get("texto_anuncio",""))[:300],
                 score,
                 p.get("score_dropshipping", p.get("score","")),
                 dias,

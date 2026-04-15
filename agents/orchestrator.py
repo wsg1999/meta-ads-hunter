@@ -41,13 +41,15 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
     real_urls_by_keyword = {}
     for ad in raw_ads:
         kw = ad.get("keyword", "")
-        if kw and ad.get("snapshot_url"):
+        if kw and (ad.get("snapshot_url") or ad.get("page_url")):
             if kw not in real_urls_by_keyword:
                 real_urls_by_keyword[kw] = {
                     "ad_url":       ad.get("ad_url", ""),
                     "snapshot_url": ad.get("snapshot_url", ""),
                     "page_url":     ad.get("page_url", ""),
+                    "website_url":  ad.get("website_url", ""),
                     "page_name":    ad.get("page_name", ""),
+                    "raw_text":     ad.get("raw_text", ""),
                     "dias_activo":  ad.get("dias_activo", 0),
                     "gasto_dia_est": ad.get("gasto_dia_est", 0),
                 }
@@ -82,8 +84,10 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
 
         if real:
             p["ad_url"]       = p.get("ad_url") or real.get("snapshot_url") or real.get("ad_url", "")
+            p["snapshot_url"] = real.get("snapshot_url", "")
             p["url_meta_ads"] = real.get("page_url", "")
             p["url_web"]      = real.get("website_url", "")
+            p["raw_text"]     = p.get("raw_text") or real.get("raw_text", "")
             if not p.get("nombre_anunciante"):
                 p["nombre_anunciante"] = real.get("page_name", "")
 
