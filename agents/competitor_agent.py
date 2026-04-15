@@ -5,95 +5,28 @@ estrategia y tiempo que llevan anunciando.
 """
 import os, json, asyncio
 import anthropic
-from playwright.async_api import async_playwright
+import aiohttp
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 async def find_store_url(anunciante: str, marca: str) -> str | None:
-    """
-    Busca la URL de la tienda web del anunciante usando Playwright.
-    Prioriza tiendas propias (.com, .mx, Shopify, etc.)
-    """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page    = await browser.new_page()
-        try:
-            query = f"{anunciante} {marca} tienda online moda"
-            url   = f"https://www.google.com/search?q={query.replace(' ', '+')}"
-            await page.goto(url, timeout=15000)
-            await asyncio.sleep(2)
-
-            # Extraer primeros resultados
-            links = await page.evaluate("""
-                () => {
-                    const results = document.querySelectorAll('a[href]');
-                    const urls = [];
-                    results.forEach(a => {
-                        const h = a.href;
-                        if (h && !h.includes('google') && !h.includes('facebook')
-                            && !h.includes('instagram') && h.startsWith('http')) {
-                            urls.push(h);
-                        }
-                    });
-                    return urls.slice(0, 5);
-                }
-            """)
-
-            # Filtrar por dominios de tienda propios
-            for link in links:
-                if any(x in link for x in [".com", ".mx", ".es", ".co", "shopify", "myshopify"]):
-                    if not any(x in link for x in ["youtube", "twitter", "tiktok", "pinterest", "wikipedia"]):
-                        await browser.close()
-                        return link
-
-        except Exception as e:
-            print(f"⚠️  [COMPETITOR] Error buscando URL de '{anunciante}': {e}")
-        finally:
-            await browser.close()
+    """Intenta deducir la URL de la tienda basándose en el nombre — sin scraping."""
+    # Construcción heurística de URL a partir del nombre
+    nombre_limpio = marca.lower().replace(" ", "").replace("'", "").replace("&", "")
+    candidatos = [
+        f"https://www.{nombre_limpio}.com",
+        f"https://www.{nombre_limpio}.es",
+        f"https://{nombre_limpio}.myshopify.com",
+    ]
+    async with aiohttp.ClientSession() as session:
+        for url in candidatos:
+            try:
+                async with session.head(url, timeout=aiohttp.ClientTimeout(total=5), allow_redirects=True) as resp:
+                    if resp.status < 400:
+                        return str(resp.url)
+            except Exception:
+                continue
     return None
-
-async def scrape_store(url: str) -> dict:
-    """
-    Extrae información de la tienda web del competidor.
-    """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-        page    = await browser.new_page()
-        data    = {"url": url, "productos": [], "texto": ""}
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(2)
-
-            # Extraer texto general y productos visibles
-            content = await page.evaluate("""
-                () => {
-                    const text = document.body.innerText || '';
-                    const prices = [];
-                    document.querySelectorAll('[class*="price"], [class*="precio"], [class*="cost"]').forEach(el => {
-                        if (el.innerText) prices.push(el.innerText.trim().slice(0, 30));
-                    });
-                    const products = [];
-                    document.querySelectorAll('h2, h3, [class*="product-title"], [class*="product-name"]').forEach(el => {
-                        if (el.innerText && el.innerText.length > 3 && el.innerText.length < 100) {
-                            products.push(el.innerText.trim());
-                        }
-                    });
-                    return {
-                        text: text.slice(0, 2000),
-                        prices: prices.slice(0, 10),
-                        products: products.slice(0, 15)
-                    };
-                }
-            """)
-            data["texto"]    = content.get("text", "")
-            data["precios"]  = content.get("prices", [])
-            data["productos_visibles"] = content.get("products", [])
-
-        except Exception as e:
-            print(f"⚠️  [COMPETITOR] Error scrapeando '{url}': {e}")
-        finally:
-            await browser.close()
-    return data
 
 async def analyze_competitor(ad: dict) -> dict:
     """
@@ -108,13 +41,12 @@ async def analyze_competitor(ad: dict) -> dict:
 
     print(f"🔎 [COMPETITOR] Analizando tienda de '{anunciante}'...")
 
-    # 1. Buscar URL de la tienda
+    # 1. Buscar URL de la tienda (sin scraping)
     store_url = await find_store_url(anunciante, marca)
     store_data = {}
 
     if store_url:
         print(f"🔎 [COMPETITOR] Tienda encontrada: {store_url}")
-        store_data = await scrape_store(store_url)
     else:
         print(f"🔎 [COMPETITOR] No se encontró tienda web para '{anunciante}'")
 
