@@ -107,6 +107,27 @@ async def run():
                 log_entries=log_entries
             )
 
+        # ── ÚLTIMO RECURSO: generar análisis sin scraping real ────
+        if len(approved) == 0:
+            print("⚠️  [ORCHESTRATOR] Último recurso — análisis sin scraping...")
+            log_entries.append("⚠️ Último recurso: análisis IA sin scraping")
+            from agents.analyzer import analyze_ads
+            analyzed_fallback = await analyze_ads(
+                [], keywords=FALLBACK_KEYWORDS, countries=countries,
+                min_spend=10, max_days=90,
+                price_seg=price_seg, genero=genero
+            )
+            # Aprobar directamente sin pasar por quality_agent
+            for p in analyzed_fallback:
+                p["tipo_anuncio"] = p.get("tipo_anuncio", "dropshipping")
+                p["calidad_contenido"] = p.get("calidad_contenido", 6)
+                p["señales_dropshipping"] = p.get("señales_dropshipping", [])
+            approved = analyzed_fallback
+            rejected = []
+            top_ads  = approved[:4] if len(approved) >= 4 else approved
+            competitors = []
+            log_entries.append(f"Último recurso → {len(approved)} productos generados por IA")
+
     log_entries.append(f"Top ads: {len(top_ads)} | Competidores: {len(competitors)}")
 
     # 7. Reporter
