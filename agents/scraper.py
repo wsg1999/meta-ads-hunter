@@ -34,9 +34,13 @@ def build_ad_url(ad_id: str) -> str:
     return f"https://www.facebook.com/ads/library/?id={ad_id}"
 
 
-def build_page_url(page_name: str, country: str = "ES") -> str:
+def build_page_url(page_name: str, country: str = "ES", page_id: str = "") -> str:
     """URL directa a todos los anuncios de esa página en Meta Ads Library.
-    Usa el nombre exacto de la página tal como aparece en Facebook + país del anuncio."""
+    Si tenemos page_id usamos view_all_page_id — enlace exacto sin ambigüedad."""
+    if page_id:
+        # view_all_page_id = enlace directo a TODOS los anuncios de esa página específica
+        return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&view_all_page_id={page_id}"
+    # Fallback: buscar por nombre exacto
     from urllib.parse import quote
     q = quote(page_name)
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&search_type=page&q={q}"
@@ -155,7 +159,7 @@ def format_ad(ad: dict, keyword: str, country: str) -> dict:
         "ad_id":          ad_id,
         "ad_url":         build_ad_url(ad_id) if ad_id else "",
         "snapshot_url":   ad.get("ad_snapshot_url", ""),
-        "page_url":       build_page_url(page_name, country),
+        "page_url":       build_page_url(page_name, country, page_id=ad.get("page_id","")),
         "website_url":    website_url,
         "page_name":      page_name,
         "page_id":        ad.get("page_id", ""),
