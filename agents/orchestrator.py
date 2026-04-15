@@ -7,8 +7,10 @@ from datetime import datetime
 
 from agents.keyword_agent    import get_auto_keywords, KEYWORD_POOL
 from agents.memory_agent     import get_smart_keywords
-from agents.scraper          import scrape_meta_ads
-from agents.analyzer         import analyze_ads
+from agents.trend_agent          import extract_trend_intelligence
+from agents.dropship_specialist  import analyze_dropship_opportunities
+from agents.scraper              import scrape_meta_ads
+from agents.analyzer             import analyze_ads
 from agents.quality_agent    import classify_and_filter
 from agents.top_ads_agent    import analyze_top_ads
 from agents.competitor_agent import analyze_competitors
@@ -50,22 +52,38 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
                     "gasto_dia_est": ad.get("gasto_dia_est", 0),
                 }
 
-    # Analyzer
-    analyzed = await analyze_ads(raw_ads, keywords=keywords, countries=countries,
-                                  min_spend=min_spend, max_days=max_days,
-                                  price_seg=price_seg, genero=genero)
+    # Trend Agent — extrae inteligencia de marcas grandes como referencia
+    trend_intelligence = await extract_trend_intelligence(raw_ads)
+
+    # Dropship Specialist — detecta oportunidades de dropshipping chino
+    analyzed = await analyze_dropship_opportunities(raw_ads, trend_context=trend_intelligence)
     log_entries.append(f"Anuncios analizados → potenciales ganadores: {len(analyzed)}")
 
-    # Inyectar URLs reales del API en los productos analizados usando la keyword de origen
+    # Inyectar URLs reales del API en los productos analizados
     for p in analyzed:
+        # Buscar por keyword o por nombre del anunciante
         kw = p.get("keyword_origen", "")
-        if kw in real_urls_by_keyword:
-            real = real_urls_by_keyword[kw]
-            # Solo sobreescribir si el producto no tiene URL propia
-            if not p.get("ad_url"):
-                p["ad_url"] = real.get("snapshot_url") or real.get("ad_url", "")
-            if not p.get("url_anunciante"):
-                p["url_anunciante"] = real.get("page_url", "")
+        anunciante = p.get("marca_anunciante", p.get("nombre_anunciante", ""))
+
+        # Buscar en el índice de URLs reales
+        real = real_urls_by_keyword.get(kw, {})
+        if not real:
+            # Buscar por nombre de página en los raw_ads
+            for ad in raw_ads:
+                if anunciante and anunciante.lower() in ad.get("page_name","").lower():
+                    real = {
+                        "ad_url":       ad.get("snapshot_url") or ad.get("ad_url", ""),
+                        "snapshot_url": ad.get("snapshot_url", ""),
+                        "page_url":     ad.get("page_url", ""),
+                        "website_url":  ad.get("website_url", ""),
+                        "page_name":    ad.get("page_name", ""),
+                    }
+                    break
+
+        if real:
+            p["ad_url"]       = p.get("ad_url") or real.get("snapshot_url") or real.get("ad_url", "")
+            p["url_meta_ads"] = real.get("page_url", "")
+            p["url_web"]      = real.get("website_url", "")
             if not p.get("nombre_anunciante"):
                 p["nombre_anunciante"] = real.get("page_name", "")
 

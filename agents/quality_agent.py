@@ -76,9 +76,10 @@ Para CADA producto debes:
    - Cualquier cosa que no debería aparecer en un negocio de moda legítimo
 
 3. DECIDIR si APROBAR o RECHAZAR:
-   - APROBAR: dropshipping, marcas reales, mixtos, ia_generico — TODOS son útiles para el usuario
-   - RECHAZAR SOLO: contenido explícitamente adulto, violencia, fraude demostrable ("pierde 10kg en 3 días"), apuestas, crypto
-   - IMPORTANTE: ia_generico NO es motivo de rechazo por sí solo. Solo rechaza si además tiene contenido inapropiado.
+   - APROBAR: dropshipping, tiendas pequeñas, marcas desconocidas, ia_generico — TODO lo que se pueda replicar
+   - RECHAZAR: marcas grandes y reconocidas (Zara, Mango, ASOS, H&M, Shein, Massimo Dutti, Reserved, Sandro, COS, etc.) — estas son solo referencia, no las queremos en el sheet
+   - RECHAZAR TAMBIÉN: contenido adulto, violencia, fraude, apuestas, crypto
+   - IMPORTANTE: prioriza productos SIN marca fuerte, que parezcan dropshipping o marca propia pequeña
 
 PRODUCTOS A ANALIZAR:
 {products_json}

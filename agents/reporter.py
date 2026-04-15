@@ -18,13 +18,13 @@ SCOPES = [
 SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
 HEADERS_WINNERS = [
-    "Fecha", "Producto", "Marca", "Categoría",
-    "Nombre anunciante", "Ver anuncios en Meta", "Link directo al anuncio",
-    "Tipo anuncio", "Score /10", "Días activo",
-    "Gasto/día (USD)", "Variaciones", "Países",
-    "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
-    "Ángulo de venta", "Por qué es ganador", "Tendencia",
-    "Calidad /10", "Señales dropshipping", "Keyword origen",
+    "Fecha", "Producto", "Marca anunciante", "Categoría",
+    "🔗 Anuncio en Meta", "📘 Página Meta Ads", "🌐 Web del comercio",
+    "Score /10", "Score Dropshipping", "Días activo", "Gasto/día (USD)",
+    "País", "Precio venta (EUR)", "Costo proveedor (EUR)", "Margen %",
+    "Señales dropshipping", "Cómo encontrar proveedor",
+    "Ángulo de venta", "Por qué es oportunidad",
+    "Keyword origen",
 ]
 
 HEADERS_TOP = [
@@ -149,18 +149,26 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             anun  = p.get("nombre_anunciante", p.get("marca", ""))
             pais  = p.get("pais_origen", "MX")
             rows.append([
-                today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
+                today,
+                p.get("nombre",""),
                 anun,
-                p.get("url_anunciante") or build_meta_url(anun, pais),   # Página del anunciante
-                p.get("ad_url") or build_keyword_url(p.get("nombre",""), pais),  # Snapshot del anuncio real
-                p.get("tipo_anuncio",""), score, dias,
-                p.get("gasto_dia",""), p.get("variaciones",""),
-                ", ".join(p.get("paises", [pais])),
-                p.get("precio_venta_mxn",""), p.get("costo_estimado_mxn",""), p.get("margen_pct",""),
-                p.get("angulo_venta",""), p.get("por_que_ganador",""),
-                "Sí" if p.get("tendencia") else "No",
-                p.get("calidad_contenido", p.get("calidad_score","")),
-                ", ".join(p.get("señales_dropshipping", p.get("señales_drop", []))),
+                p.get("categoria",""),
+                # 3 LINKS:
+                p.get("ad_url",""),                                          # Anuncio directo
+                p.get("url_meta_ads") or p.get("url_anunciante") or build_meta_url(anun, pais),  # Página Meta Ads
+                p.get("url_web",""),                                         # Web del comercio
+                score,
+                p.get("score_dropshipping", p.get("score","")),
+                dias,
+                p.get("gasto_dia_usd", p.get("gasto_dia","")),
+                p.get("pais", pais),
+                p.get("precio_venta_eur", p.get("precio_venta_mxn","")),
+                p.get("costo_proveedor_eur", p.get("costo_estimado_eur", p.get("costo_estimado_mxn",""))),
+                p.get("margen_pct",""),
+                " | ".join(p.get("señales_dropshipping", [])),
+                p.get("como_encontrar_proveedor", p.get("proveedor_sugerido","")),
+                p.get("angulo_venta",""),
+                p.get("por_que_oportunidad", p.get("por_que_ganador","")),
                 p.get("keyword_origen", p.get("keyword","")),
             ])
             sr = start + i

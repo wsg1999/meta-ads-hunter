@@ -17,6 +17,7 @@ FIELDS = ",".join([
     "ad_creative_bodies",
     "ad_creative_link_titles",
     "ad_creative_link_descriptions",
+    "ad_creative_link_captions",   # Suele contener el dominio de la web
     "ad_snapshot_url",
     "page_id",
     "page_name",
@@ -103,6 +104,26 @@ async def fetch_ads_for_keyword(session, keyword: str, country: str, token: str,
         return []
 
 
+def extract_website_url(ad: dict) -> str:
+    """Extrae la URL de la web del comercio desde los datos del anuncio."""
+    # 1. Intentar desde captions (suele ser el dominio)
+    captions = ad.get("ad_creative_link_captions", []) or []
+    for cap in captions:
+        if cap and "." in cap and not "facebook" in cap.lower():
+            url = cap.strip()
+            if not url.startswith("http"):
+                url = "https://" + url
+            return url
+
+    # 2. Intentar desde descriptions (a veces contienen el dominio)
+    descs = ad.get("ad_creative_link_descriptions", []) or []
+    for desc in descs:
+        if desc and len(desc) < 60 and "." in desc and " " not in desc.strip():
+            return "https://" + desc.strip()
+
+    return ""
+
+
 def format_ad(ad: dict, keyword: str, country: str) -> dict:
     """Convierte el formato de la API al formato interno del sistema."""
     ad_id       = ad.get("id", "")
@@ -110,13 +131,17 @@ def format_ad(ad: dict, keyword: str, country: str) -> dict:
     bodies      = ad.get("ad_creative_bodies", []) or []
     titles      = ad.get("ad_creative_link_titles", []) or []
     descs       = ad.get("ad_creative_link_descriptions", []) or []
+    captions    = ad.get("ad_creative_link_captions", []) or []
 
     raw_text = " | ".join(filter(None, [
         page_name,
         " ".join(titles[:2]),
         " ".join(bodies[:2]),
         " ".join(descs[:1]),
+        " ".join(captions[:1]),
     ]))[:400]
+
+    website_url = extract_website_url(ad)
 
     spend_total   = parse_spend(ad.get("spend"))
     dias          = days_active(ad.get("ad_delivery_start_time"))
@@ -126,7 +151,9 @@ def format_ad(ad: dict, keyword: str, country: str) -> dict:
         "raw_text":       raw_text,
         "ad_id":          ad_id,
         "ad_url":         build_ad_url(ad_id) if ad_id else "",
+        "snapshot_url":   ad.get("ad_snapshot_url", ""),
         "page_url":       build_page_url(page_name, country),
+        "website_url":    website_url,
         "page_name":      page_name,
         "page_id":        ad.get("page_id", ""),
         "ad_start_date":  ad.get("ad_delivery_start_time", ""),
