@@ -132,7 +132,8 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             pais  = p.get("pais_origen", "MX")
             rows.append([
                 today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
-                anun, build_meta_url(anun, pais), p.get("ad_url",""),
+                anun, build_meta_url(anun, pais),
+                p.get("ad_url") or p.get("url_anunciante") or build_meta_url(anun, pais),
                 p.get("tipo_anuncio",""), score, dias,
                 p.get("gasto_dia",""), p.get("variaciones",""),
                 ", ".join(p.get("paises",[])),
@@ -173,7 +174,7 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
                 p.get("ventana_oportunidad",""),
                 p.get("puntuacion_replicabilidad",""),
                 build_meta_url(anun, pais),
-                p.get("ad_url",""),
+                p.get("ad_url") or p.get("url_anunciante") or build_meta_url(anun, pais),
             ])
             sr = start + i
             fmt_reqs.append(color_cell(ws_top.id, sr, 4, 5, color_score(score)))
