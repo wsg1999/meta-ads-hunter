@@ -1,19 +1,30 @@
 {
+  "brand_profile": {
+    "nombre": "Carlota's Collections",
+    "estilo": "moda femenina elegante y sofisticada",
+    "categorias_principales": ["vestidos midi y maxi", "conjuntos dos piezas", "vestidos de fiesta y gala", "monos elegantes", "blazers y abrigos"],
+    "precio_min_eur": 30,
+    "precio_max_eur": 70,
+    "mercado": "España y Europa",
+    "cliente": "mujer 25-45 años, elegante, eventos y uso diario",
+    "buscar": "productos que complementen o compitan directamente con el catálogo actual — vestidos, conjuntos elegantes, tendencias europeas que aún no tengo"
+  },
+
   "keywords": [
-    "vestidos mujer",
-    "tenis mujer",
-    "bolsas crossbody",
-    "ropa casual mujer",
-    "accesorios moda"
+    "vestido midi elegante mujer",
+    "conjunto dos piezas mujer elegante",
+    "vestido maxi fiesta mujer",
+    "vestido corsé satén mujer",
+    "conjunto blazer pantalón mujer"
   ],
 
   "auto_keywords": true,
 
-  "countries": ["ES", "IT", "FR", "DE", "PT"],
+  "countries": ["ES", "IT", "FR", "PT", "DE"],
 
-  "min_spend_usd_day": 65,
+  "min_spend_usd_day": 30,
   "max_days_active": 30,
-  "price_segment": "medio",
+  "price_segment": "medio-premium",
   "gender": "mujer",
 
   "content_filter": {
@@ -28,5 +39,5 @@
     "tab_log":       "Log diario"
   },
 
-  "schedule_utc": "07:00"
+  "schedule_utc": "12:00"
 }

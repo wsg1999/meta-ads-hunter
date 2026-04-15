@@ -12,36 +12,38 @@ client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # Pool completo de categorías — cada día rota a un grupo diferente
 KEYWORD_POOL = [
-    # Grupo 0 — Vestidos y faldas
-    ["vestido midi mujer", "vestido lino verano", "falda satinada midi",
-     "vestido crochet playa", "vestido cut out mujer"],
-    # Grupo 1 — Tops y blusas
-    ["blusa crop bordada", "top corset mujer", "blusa off shoulder",
-     "camisa oversize mujer", "top halter mujer"],
-    # Grupo 2 — Pantalones y jeans
-    ["pantalón cargo mujer", "jeans wide leg mujer", "pantalón lino mujer",
-     "leggings deportivos mujer", "pantalón sastre mujer"],
-    # Grupo 3 — Conjuntos y co-ords
-    ["conjunto co-ord mujer", "set deportivo mujer", "conjunto lino mujer",
-     "set blazer pantalón mujer", "conjunto crochet mujer"],
-    # Grupo 4 — Calzado
-    ["tenis chunky mujer", "sandalias plataforma mujer", "botas vaqueras mujer",
-     "zapatos mary jane mujer", "mules tacón mujer"],
-    # Grupo 5 — Bolsas y accesorios
-    ["bolsa crossbody mujer", "bolsa tote aesthetic", "bolsa bucket mujer",
-     "cinturón mujer tendencia", "sombrero bucket mujer"],
-    # Grupo 6 — Ropa de temporada
-    ["ropa de verano mujer", "conjunto playa mujer", "vestido floral verano",
-     "bikini trendencia", "pareo playa mujer"],
-    # Grupo 7 — Estilo y aesthetic
-    ["ropa aesthetic mujer", "outfits casual chic", "ropa cottagecore mujer",
-     "estilo Y2K mujer", "moda indie mujer"],
-    # Grupo 8 — Dropshipping alta rotación
-    ["ropa temu mujer tendencia", "moda aliexpress mujer", "ropa china calidad",
-     "dropshipping moda mujer", "ropa importada mujer"],
-    # Grupo 9 — Lujo y premium
-    ["ropa mujer lujo asequible", "dupe bolsa diseñador", "look de lujo económico",
-     "moda premium mujer", "ropa elegante mujer"],
+    # Grupo 0 — Vestidos midi elegantes (core de Carlota's)
+    ["vestido midi elegante mujer", "vestido midi satinado", "vestido midi con volantes",
+     "vestido midi drapeado", "vestido midi asimétrico mujer"],
+    # Grupo 1 — Vestidos maxi y largos
+    ["vestido maxi elegante mujer", "vestido largo fiesta", "vestido maxi satén mujer",
+     "vestido largo drapeado", "vestido maxi lentejuelas"],
+    # Grupo 2 — Vestidos de fiesta y gala
+    ["vestido fiesta mujer elegante", "vestido gala corsé", "vestido noche encaje mujer",
+     "vestido cóctel mujer", "vestido invitada boda elegante"],
+    # Grupo 3 — Vestidos con corsé y escote
+    ["vestido corsé mujer", "vestido corsé satén", "vestido bustier elegante",
+     "vestido escote profundo elegante", "vestido strapless elegante"],
+    # Grupo 4 — Conjuntos dos piezas elegantes
+    ["conjunto dos piezas elegante mujer", "set blazer pantalón mujer",
+     "conjunto chaqueta pantalón mujer", "co-ord elegante mujer", "conjunto sastre mujer"],
+    # Grupo 5 — Conjuntos pantalón ancho
+    ["conjunto pantalón palazzo mujer", "set top pantalón wide leg",
+     "conjunto pantalón fluido elegante", "outfit pantalón ancho mujer elegante",
+     "conjunto palazzo satén mujer"],
+    # Grupo 6 — Vestidos encaje y tul
+    ["vestido encaje mujer elegante", "vestido tul midi mujer", "vestido encaje floral",
+     "vestido encaje corsé", "vestido bordado elegante mujer"],
+    # Grupo 7 — Monos y jumpsuits
+    ["mono elegante mujer", "jumpsuit elegante mujer", "mono satén mujer",
+     "mono wide leg mujer", "jumpsuit fiesta mujer"],
+    # Grupo 8 — Blazers y abrigos elegantes
+    ["blazer elegante mujer", "blazer oversized mujer", "abrigo elegante mujer",
+     "blazer crop mujer", "conjunto blazer mujer tendencia"],
+    # Grupo 9 — Tendencias Europa primavera
+    ["vestido primavera elegante mujer", "moda primavera mujer europea",
+     "vestido floral midi elegante", "conjunto primavera mujer sofisticado",
+     "vestido lino elegante mujer"],
 ]
 
 def get_daily_rotation_keywords() -> list:

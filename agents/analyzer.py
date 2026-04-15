@@ -17,20 +17,24 @@ async def analyze_ads(raw_ads, keywords, countries, min_spend, max_days, price_s
 
     pais_principal = countries[0] if countries else "ES"
 
-    prompt = f"""Experto en dropshipping de moda y tendencias europeas. Analiza estos anuncios de Meta Ads Library.
+    prompt = f"""Eres experto en moda femenina europea y dropshipping. Trabajas para Carlota's Collections, una tienda española de moda elegante femenina (precio €30-70) que vende principalmente:
+- Vestidos midi y maxi elegantes (casual, fiesta, gala)
+- Conjuntos de dos piezas (top+pantalón, blazer+pantalón)
+- Vestidos con corsé, encaje, satén, lentejuelas, volantes
+- Monos elegantes
+- Blazers y abrigos de mujer
 
-CONTEXTO DE BÚSQUEDA:
-- Países objetivo: {', '.join(countries)}
-- Menos de {max_days} días activo (cuanto más reciente, mejor — queremos la curva ascendente)
-- Gasto estimado ≥ ${min_spend} USD/día
-- Segmento: {price_seg} | Género: {genero}
-- Keywords del día: {', '.join(keywords)}
+Tu misión: analizar anuncios de Meta Ads Library en Europa ({', '.join(countries)}) y detectar productos ganadores que:
+1. ENCAJEN con el estilo de Carlota's (elegante, sofisticado, mujer 25-45 años)
+2. Sean TENDENCIA EMERGENTE — menos de {max_days} días activo o escalando rápido
+3. Tengan buen margen para dropshipping (precio venta €30-70, margen >60%)
+4. Complementen o mejoren lo que ya vende Carlota's
 
-SCORING DE PRIMER MOVIMIENTO (muy importante):
-- Score 9-10: producto con menos de 7 días activo, gasto creciente, nicho poco saturado → OPORTUNIDAD MÁXIMA
-- Score 7-8: producto 7-20 días, buen margen, tendencia clara en Europa
-- Score 5-6: producto conocido pero con ángulo diferenciador
-- Prioriza siempre productos NUEVOS sobre productos ya establecidos
+SCORING DE OPORTUNIDAD:
+- Score 9-10: vestido o conjunto elegante, menos de 7 días activo, alto gasto, estilo que encaja perfectamente
+- Score 7-8: producto 7-20 días, tendencia clara, margen excelente
+- Score 5-6: producto interesante pero ya con cierta competencia
+- Ignora: ropa deportiva, calzado de deporte, accesorios básicos, ropa infantil
 
 ANUNCIOS DETECTADOS:
 {ads_ctx}
