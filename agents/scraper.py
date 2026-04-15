@@ -1,154 +1,177 @@
 """
-SCRAPER v3 — Selectores múltiples + captura de texto completo de página
-Si el selector específico de Meta falla (cambian las clases CSS),
-usa selectores genéricos alternativos para no quedarse en 0.
+SCRAPER v4 — Meta Ads Library API oficial
+Sin scraping, sin bloqueos, datos reales siempre.
+API gratuita de Meta: https://developers.facebook.com/docs/marketing-api/reference/ads-archive
 """
+import os
 import asyncio
-from playwright.async_api import async_playwright
+import aiohttp
 
-META_ADS_URL = "https://www.facebook.com/ads/library/"
+META_API_URL = "https://graph.facebook.com/v19.0/ads_archive"
 
-# Selectores en orden de preferencia — si Meta cambia sus clases, los alternativos recogen igual
-SELECTORS = [
-    '[class*="x8iyvax"]',           # Selector principal (clase Meta actual)
-    '[class*="_7jyr"]',             # Alternativo 1
-    '[data-testid*="ad-"]',        # Alternativo 2 por atributo data
-    'div[role="article"]',         # Genérico: artículos
-    '.x1lliihq',                   # Otra clase frecuente en Meta
-]
+FIELDS = ",".join([
+    "id",
+    "ad_creation_time",
+    "ad_delivery_start_time",
+    "ad_delivery_stop_time",
+    "ad_creative_bodies",
+    "ad_creative_link_titles",
+    "ad_creative_link_descriptions",
+    "ad_snapshot_url",
+    "page_id",
+    "page_name",
+    "funding_entity",
+    "impressions",
+    "spend",
+    "currency",
+    "publisher_platforms",
+    "languages",
+])
 
-def extract_ad_url(card_text, card_element_js):
-    """JS para extraer URL directa del anuncio."""
-    return """(c) => {
-        let ad_url = '', ad_id = '';
-        const links = c.querySelectorAll('a[href*="id="]');
-        if (links.length > 0) {
-            const match = links[0].href.match(/[?&]id=(\\d+)/);
-            if (match) { ad_id = match[1]; ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id; }
-        }
-        if (!ad_id) {
-            const t = c.innerText || '';
-            const m = t.match(/Library ID[:\\s]+(\\d+)/i) || t.match(/ID del anuncio[:\\s]+(\\d+)/i);
-            if (m) { ad_id = m[1]; ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id; }
-        }
-        return { ad_url, ad_id };
-    }"""
 
-async def scrape_page(page, keyword, country):
-    """Intenta extraer anuncios de una página usando múltiples selectores."""
-    ads = []
+def build_ad_url(ad_id: str) -> str:
+    return f"https://www.facebook.com/ads/library/?id={ad_id}"
 
-    for selector in SELECTORS:
-        try:
-            js = f"""() => {{
-                const cards = document.querySelectorAll('{selector}');
-                const out = [];
-                cards.forEach(c => {{
-                    const t = c.innerText || '';
-                    if (t.length > 40) {{
-                        let ad_url = '', ad_id = '';
-                        const links = c.querySelectorAll('a[href*="id="]');
-                        if (links.length > 0) {{
-                            const match = links[0].href.match(/[?&]id=(\\d+)/);
-                            if (match) {{ ad_id = match[1]; ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id; }}
-                        }}
-                        if (!ad_id) {{
-                            const m = t.match(/Library ID[:\\s]+(\\d+)/i);
-                            if (m) {{ ad_id = m[1]; ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id; }}
-                        }}
-                        out.push({{ raw_text: t.slice(0, 400), ad_url, ad_id }});
-                    }}
-                }});
-                return out;
-            }}"""
-            result = await page.evaluate(js)
-            if result and len(result) > 0:
-                print(f"🕷  [SCRAPER] Selector '{selector}' → {len(result)} anuncios")
-                ads = result
-                break
-        except Exception:
-            continue
 
-    # Fallback final: capturar texto visible de toda la página si todo falla
-    if not ads:
-        try:
-            page_text = await page.inner_text("body")
-            chunks = [page_text[i:i+350] for i in range(0, min(len(page_text), 3500), 350)]
-            ads = [{"raw_text": c, "ad_url": "", "ad_id": ""} for c in chunks if len(c) > 80]
-            if ads:
-                print(f"🕷  [SCRAPER] Fallback texto página → {len(ads)} fragmentos")
-        except Exception as e:
-            print(f"🕷  [SCRAPER] Fallback también falló: {e}")
+def build_page_url(page_name: str, country: str = "ES") -> str:
+    q = page_name.replace(" ", "+")
+    return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&search_type=page&q={q}"
 
-    return ads
+
+def parse_spend(spend_obj) -> int:
+    """Extrae el gasto diario estimado del objeto spend de la API."""
+    if not spend_obj:
+        return 0
+    try:
+        lower = int(spend_obj.get("lower_bound", 0) or 0)
+        upper = int(spend_obj.get("upper_bound", lower) or lower)
+        return (lower + upper) // 2
+    except Exception:
+        return 0
+
+
+def parse_impressions(imp_obj) -> int:
+    if not imp_obj:
+        return 0
+    try:
+        lower = int(imp_obj.get("lower_bound", 0) or 0)
+        upper = int(imp_obj.get("upper_bound", lower) or lower)
+        return (lower + upper) // 2
+    except Exception:
+        return 0
+
+
+def days_active(start_time: str) -> int:
+    """Calcula cuántos días lleva activo el anuncio."""
+    from datetime import datetime, timezone
+    if not start_time:
+        return 0
+    try:
+        start = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        return max(0, (now - start).days)
+    except Exception:
+        return 0
+
+
+async def fetch_ads_for_keyword(session, keyword: str, country: str, token: str, limit: int = 30) -> list:
+    """Llama a la API de Meta para una keyword y país concretos."""
+    params = {
+        "access_token": token,
+        "ad_reached_countries": f'["{country}"]',
+        "search_terms": keyword,
+        "ad_active_status": "ACTIVE",
+        "ad_type": "ALL",
+        "fields": FIELDS,
+        "limit": limit,
+    }
+    try:
+        async with session.get(META_API_URL, params=params, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                print(f"⚠️  [API] Error {resp.status} para '{keyword}' ({country}): {text[:200]}")
+                return []
+            data = await resp.json()
+            ads = data.get("data", [])
+            print(f"✅ [API] '{keyword}' en {country} → {len(ads)} anuncios")
+            return ads
+    except asyncio.TimeoutError:
+        print(f"⚠️  [API] Timeout para '{keyword}' ({country})")
+        return []
+    except Exception as e:
+        print(f"⚠️  [API] Error inesperado '{keyword}' ({country}): {e}")
+        return []
+
+
+def format_ad(ad: dict, keyword: str, country: str) -> dict:
+    """Convierte el formato de la API al formato interno del sistema."""
+    ad_id       = ad.get("id", "")
+    page_name   = ad.get("page_name", ad.get("funding_entity", ""))
+    bodies      = ad.get("ad_creative_bodies", []) or []
+    titles      = ad.get("ad_creative_link_titles", []) or []
+    descs       = ad.get("ad_creative_link_descriptions", []) or []
+
+    raw_text = " | ".join(filter(None, [
+        page_name,
+        " ".join(titles[:2]),
+        " ".join(bodies[:2]),
+        " ".join(descs[:1]),
+    ]))[:400]
+
+    spend_total   = parse_spend(ad.get("spend"))
+    dias          = days_active(ad.get("ad_delivery_start_time"))
+    gasto_dia_est = (spend_total // max(dias, 1)) if dias > 0 else spend_total
+
+    return {
+        "raw_text":       raw_text,
+        "ad_id":          ad_id,
+        "ad_url":         build_ad_url(ad_id) if ad_id else "",
+        "page_url":       build_page_url(page_name, country),
+        "page_name":      page_name,
+        "page_id":        ad.get("page_id", ""),
+        "ad_start_date":  ad.get("ad_delivery_start_time", ""),
+        "dias_activo":    dias,
+        "gasto_total":    spend_total,
+        "gasto_dia_est":  gasto_dia_est,
+        "impresiones":    parse_impressions(ad.get("impressions")),
+        "plataformas":    ad.get("publisher_platforms", []),
+        "idiomas":        ad.get("languages", []),
+        "snapshot_url":   ad.get("ad_snapshot_url", ""),
+        "keyword":        keyword,
+        "country":        country,
+    }
 
 
 async def scrape_meta_ads(keywords: list, countries: list) -> list:
-    print("🕷  [SCRAPER] Iniciando Playwright stealth...")
-    all_ads = []
-    seen_ids = set()
+    """
+    Punto de entrada principal. Usa la API oficial de Meta.
+    Si no hay token configurado, avisa y devuelve lista vacía.
+    """
+    token = os.environ.get("META_ACCESS_TOKEN", "")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox", "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--disable-extensions",
-            ]
-        )
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            locale="es-MX",
-            viewport={"width": 1280, "height": 900},
-            extra_http_headers={"Accept-Language": "es-MX,es;q=0.9,en;q=0.8"}
-        )
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
+    if not token:
+        print("⚠️  [API] META_ACCESS_TOKEN no configurado.")
+        print("⚠️  Sigue las instrucciones en README para obtener tu token gratuito.")
+        return []
 
-        kw_sample = keywords[:8]
-        co_sample = countries[:3]
+    print(f"🔑 [API] Usando Meta Ads Library API oficial...")
+    all_ads   = []
+    seen_ids  = set()
 
+    kw_sample = keywords[:10]
+    co_sample = countries[:5]
+
+    async with aiohttp.ClientSession() as session:
         for country in co_sample:
             for keyword in kw_sample:
-                print(f"🕷  [SCRAPER] '{keyword}' en {country}...")
-                page = await context.new_page()
-                try:
-                    url = (
-                        f"{META_ADS_URL}?active_status=active&ad_type=all"
-                        f"&country={country}&q={keyword.replace(' ', '+')}&media_type=all"
-                    )
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await asyncio.sleep(3)
+                ads_raw = await fetch_ads_for_keyword(session, keyword, country, token)
+                for ad in ads_raw:
+                    ad_id = ad.get("id", "")
+                    uid   = ad_id or hash(ad.get("ad_snapshot_url",""))
+                    if uid and uid not in seen_ids:
+                        seen_ids.add(uid)
+                        all_ads.append(format_ad(ad, keyword, country))
+                await asyncio.sleep(0.3)   # Respetar rate limits de la API
 
-                    # Scroll más agresivo para cargar más anuncios
-                    for _ in range(5):
-                        await page.evaluate("window.scrollBy(0, 600)")
-                        await asyncio.sleep(0.8)
-
-                    ads = await scrape_page(page, keyword, country)
-
-                    for ad in ads:
-                        uid = hash(ad.get("raw_text", "")[:80])
-                        if uid not in seen_ids:
-                            seen_ids.add(uid)
-                            ad["keyword"] = keyword
-                            ad["country"] = country
-                            all_ads.append(ad)
-
-                except Exception as e:
-                    print(f"⚠️  [SCRAPER] Error '{keyword}' ({country}): {e}")
-                finally:
-                    await page.close()
-                await asyncio.sleep(1.5)
-
-        await browser.close()
-
-    print(f"🕷  [SCRAPER] Total: {len(all_ads)} anuncios únicos")
+    print(f"✅ [API] Total: {len(all_ads)} anuncios únicos obtenidos")
     return all_ads

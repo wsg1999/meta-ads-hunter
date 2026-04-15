@@ -32,12 +32,7 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependencias Python
-        run: pip install anthropic gspread google-auth playwright
-
-      - name: Instalar Chromium para Playwright
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
+        run: pip install anthropic aiohttp gspread google-auth
 
       - name: Añadir keywords y países extra (ejecución manual)
         if: github.event_name == 'workflow_dispatch'
