@@ -102,6 +102,17 @@ async def fetch_ads_for_keyword(session, keyword: str, country: str, token: str,
             data = await resp.json()
             ads = data.get("data", [])
             print(f"✅ [API] '{keyword}' en {country} → {len(ads)} anuncios")
+            # DEBUG: mostrar campos del primer anuncio
+            if ads:
+                first = ads[0]
+                print(f"🔍 [DEBUG] Campos disponibles en el primer anuncio: {list(first.keys())}")
+                print(f"🔍 [DEBUG] page_name: {first.get('page_name','')}")
+                print(f"🔍 [DEBUG] page_id: {first.get('page_id','')}")
+                print(f"🔍 [DEBUG] ad_snapshot_url: {first.get('ad_snapshot_url','')[:80]}")
+                print(f"🔍 [DEBUG] ad_creative_bodies: {first.get('ad_creative_bodies','VACÍO')}")
+                print(f"🔍 [DEBUG] ad_creative_link_titles: {first.get('ad_creative_link_titles','VACÍO')}")
+                print(f"🔍 [DEBUG] ad_creative_link_captions: {first.get('ad_creative_link_captions','VACÍO')}")
+                print(f"🔍 [DEBUG] spend: {first.get('spend','VACÍO')}")
             return ads
     except asyncio.TimeoutError:
         print(f"⚠️  [API] Timeout para '{keyword}' ({country})")
