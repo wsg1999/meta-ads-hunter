@@ -2,8 +2,8 @@ name: Meta Ads Hunter v2 — Búsqueda Diaria Automática
 
 on:
   schedule:
-    # Cada día a las 8:00 AM hora España / 1:00 AM México
-    - cron: "0 7 * * *"
+    # Cada día a las 14:00 hora España (12:00 UTC en verano/CEST)
+    - cron: "0 12 * * *"
 
   # Lanzamiento manual con keywords extra opcionales
   workflow_dispatch:
