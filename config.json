@@ -1,0 +1,32 @@
+{
+  "keywords": [
+    "vestidos mujer",
+    "tenis mujer",
+    "bolsas crossbody",
+    "ropa casual mujer",
+    "accesorios moda"
+  ],
+
+  "auto_keywords": true,
+
+  "countries": ["MX", "CO", "ES", "AR", "US"],
+
+  "min_spend_usd_day": 65,
+  "max_days_active": 30,
+  "price_segment": "medio",
+  "gender": "mujer",
+
+  "content_filter": {
+    "block_adult": true,
+    "block_violent": true,
+    "block_misleading": true
+  },
+
+  "sheets": {
+    "tab_winners":   "Ganadores",
+    "tab_descartados": "Descartados",
+    "tab_log":       "Log diario"
+  },
+
+  "schedule_utc": "07:00"
+}

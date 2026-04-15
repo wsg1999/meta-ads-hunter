@@ -1,0 +1,80 @@
+name: Meta Ads Hunter v2 — Búsqueda Diaria Automática
+
+on:
+  schedule:
+    # Cada día a las 8:00 AM hora España / 1:00 AM México
+    - cron: "0 7 * * *"
+
+  # Lanzamiento manual con keywords extra opcionales
+  workflow_dispatch:
+    inputs:
+      keywords_extra:
+        description: "Keywords extra separadas por coma (ej: vestido lino, sandalia plana)"
+        required: false
+        default: ""
+      pais_extra:
+        description: "País extra a buscar (código ISO, ej: PE, CL, US)"
+        required: false
+        default: ""
+
+jobs:
+  buscar-ganadores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias Python
+        run: pip install anthropic gspread google-auth playwright
+
+      - name: Instalar Chromium para Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Añadir keywords y países extra (ejecución manual)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python - <<'PYEOF'
+          import json
+
+          with open("config.json", "r") as f:
+              cfg = json.load(f)
+
+          extra_kw = "${{ inputs.keywords_extra }}"
+          extra_co = "${{ inputs.pais_extra }}".strip().upper()
+
+          if extra_kw.strip():
+              new_kws = [k.strip() for k in extra_kw.split(",") if k.strip()]
+              cfg["keywords"] = list(dict.fromkeys(cfg["keywords"] + new_kws))
+              print(f"Keywords actualizadas: {cfg['keywords']}")
+
+          if extra_co and extra_co not in cfg["countries"]:
+              cfg["countries"].append(extra_co)
+              print(f"País añadido: {extra_co}")
+
+          with open("config.json", "w") as f:
+              json.dump(cfg, f, indent=2, ensure_ascii=False)
+          PYEOF
+
+      - name: Ejecutar sistema de agentes
+        env:
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_SHEET_ID:         ${{ secrets.GOOGLE_SHEET_ID }}
+        run: python -m agents.orchestrator
+
+      - name: Guardar log como artefacto
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: "*.log"
+          retention-days: 14
