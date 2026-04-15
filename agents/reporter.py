@@ -19,7 +19,7 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 # ── Cabeceras ──────────────────────────────────────────────────────
 HEADERS_WINNERS = [
     "Fecha", "Producto", "Marca", "Categoría",
-    "Tipo anuncio",            # dropshipping | marca_real | ia_generico | mixto
+    "Tipo anuncio",
     "Señales dropshipping",
     "Señales marca real",
     "Calidad contenido /10",
@@ -27,6 +27,8 @@ HEADERS_WINNERS = [
     "Países", "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
     "Ángulo de venta", "Por qué es ganador",
     "Tendencia", "Score /10",
+    "Nombre anunciante",
+    "Ver todos sus anuncios",
     "Keyword origen", "País origen",
 ]
 
@@ -117,6 +119,8 @@ async def save_to_sheets(
                 p.get("por_que_ganador", ""),
                 "Sí" if p.get("tendencia") else "No",
                 p.get("score", ""),
+                p.get("nombre_anunciante", ""),
+                p.get("url_anunciante", ""),
                 p.get("keyword_origen", ""),
                 p.get("pais_origen", ""),
             ])

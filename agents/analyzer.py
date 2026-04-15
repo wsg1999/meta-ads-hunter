@@ -45,8 +45,13 @@ Genera 8-10 productos ganadores potenciales. Para cada uno:
   "score": número 1-10,
   "ganador": true si score>=7,
   "keyword_origen": "keyword",
-  "pais_origen": "MX"
+  "pais_origen": "MX",
+  "nombre_anunciante": "Nombre exacto de la página de Facebook que pone el anuncio",
+  "url_anunciante": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=MX&search_type=page&q=NOMBRE_ANUNCIANTE"
 }}
+
+En "nombre_anunciante" pon el nombre real de la página de Facebook que anuncia ese producto.
+En "url_anunciante" construye la URL de Meta Ads Library con ese nombre para ver todos sus anuncios.
 
 Solo JSON puro. Sin texto extra."""
 
