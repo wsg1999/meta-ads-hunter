@@ -81,13 +81,14 @@ def color_score(s):
 def color_amenaza(nivel):
     return {"alto": C_ROJO, "medio": C_AMARILLO, "bajo": C_VERDE}.get(nivel.lower(), C_AMARILLO)
 
-def build_meta_url(nombre, pais="MX"):
-    """URL de búsqueda por nombre de página — muestra todos los anuncios activos de esa marca."""
-    q = nombre.replace(' ', '+').replace('&', '%26')
+def build_meta_url(nombre, pais="ES"):
+    """URL directa con nombre exacto de página + país — igual que buscar manualmente en Meta Ads Library."""
+    from urllib.parse import quote
+    q = quote(nombre)
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={q}"
 
-def build_keyword_url(nombre_producto, pais="MX"):
-    """URL alternativa buscando por keyword del producto — útil si el nombre de página no coincide exactamente."""
+def build_keyword_url(nombre_producto, pais="ES"):
+    """URL de búsqueda por keyword — para encontrar el anuncio específico del producto."""
     q = nombre_producto.replace(' ', '+').replace('&', '%26')
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=keyword_unordered&q={q}"
 

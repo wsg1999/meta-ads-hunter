@@ -35,7 +35,10 @@ def build_ad_url(ad_id: str) -> str:
 
 
 def build_page_url(page_name: str, country: str = "ES") -> str:
-    q = page_name.replace(" ", "+")
+    """URL directa a todos los anuncios de esa página en Meta Ads Library.
+    Usa el nombre exacto de la página tal como aparece en Facebook + país del anuncio."""
+    from urllib.parse import quote
+    q = quote(page_name)
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&search_type=page&q={q}"
 
 
