@@ -151,8 +151,8 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             rows.append([
                 today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
                 anun,
-                build_meta_url(anun, pais),          # Ver todos los anuncios de la marca
-                p.get("ad_url") or p.get("url_anunciante") or build_keyword_url(p.get("nombre",""), pais),
+                p.get("url_anunciante") or build_meta_url(anun, pais),   # Página del anunciante
+                p.get("ad_url") or build_keyword_url(p.get("nombre",""), pais),  # Snapshot del anuncio real
                 p.get("tipo_anuncio",""), score, dias,
                 p.get("gasto_dia",""), p.get("variaciones",""),
                 ", ".join(p.get("paises", [pais])),

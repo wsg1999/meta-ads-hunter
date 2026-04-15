@@ -34,11 +34,40 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
     raw_ads = await scrape_meta_ads(keywords, countries)
     log_entries.append(f"Anuncios scrapeados: {len(raw_ads)}")
 
+    # Construir índice de URLs reales por keyword para recuperarlas después
+    # Guardamos el mejor anuncio (con snapshot_url) por keyword
+    real_urls_by_keyword = {}
+    for ad in raw_ads:
+        kw = ad.get("keyword", "")
+        if kw and ad.get("snapshot_url"):
+            if kw not in real_urls_by_keyword:
+                real_urls_by_keyword[kw] = {
+                    "ad_url":       ad.get("ad_url", ""),
+                    "snapshot_url": ad.get("snapshot_url", ""),
+                    "page_url":     ad.get("page_url", ""),
+                    "page_name":    ad.get("page_name", ""),
+                    "dias_activo":  ad.get("dias_activo", 0),
+                    "gasto_dia_est": ad.get("gasto_dia_est", 0),
+                }
+
     # Analyzer
     analyzed = await analyze_ads(raw_ads, keywords=keywords, countries=countries,
                                   min_spend=min_spend, max_days=max_days,
                                   price_seg=price_seg, genero=genero)
     log_entries.append(f"Anuncios analizados → potenciales ganadores: {len(analyzed)}")
+
+    # Inyectar URLs reales del API en los productos analizados usando la keyword de origen
+    for p in analyzed:
+        kw = p.get("keyword_origen", "")
+        if kw in real_urls_by_keyword:
+            real = real_urls_by_keyword[kw]
+            # Solo sobreescribir si el producto no tiene URL propia
+            if not p.get("ad_url"):
+                p["ad_url"] = real.get("snapshot_url") or real.get("ad_url", "")
+            if not p.get("url_anunciante"):
+                p["url_anunciante"] = real.get("page_url", "")
+            if not p.get("nombre_anunciante"):
+                p["nombre_anunciante"] = real.get("page_name", "")
 
     # Guardar índice de productos originales por nombre para recuperar campos después
     original_by_name = {p.get("nombre", ""): p for p in analyzed}
@@ -47,12 +76,11 @@ async def run_pipeline(keywords, countries, min_spend, max_days, price_seg, gene
     approved_raw, rejected = await classify_and_filter(analyzed, content_filter)
 
     # MERGE: fusionar campos del quality_agent con los datos completos del analyzer
-    # Así nunca se pierden gasto_dia, precio, margen, ángulo, etc.
     approved = []
     for p in approved_raw:
         nombre = p.get("nombre", "")
         original = original_by_name.get(nombre, {})
-        merged = {**original, **p}   # quality_agent tiene prioridad para sus campos
+        merged = {**original, **p}
         approved.append(merged)
 
     tipos = {}
