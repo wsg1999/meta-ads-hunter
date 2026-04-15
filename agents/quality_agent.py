@@ -76,8 +76,9 @@ Para CADA producto debes:
    - Cualquier cosa que no debería aparecer en un negocio de moda legítimo
 
 3. DECIDIR si APROBAR o RECHAZAR:
-   - APROBAR: dropshipping legítimo, marcas reales, mixtos — todos son útiles para el usuario
-   - RECHAZAR: contenido inapropiado, fraudes, claims falsos, contenido adulto disfrazado
+   - APROBAR: dropshipping, marcas reales, mixtos, ia_generico — TODOS son útiles para el usuario
+   - RECHAZAR SOLO: contenido explícitamente adulto, violencia, fraude demostrable ("pierde 10kg en 3 días"), apuestas, crypto
+   - IMPORTANTE: ia_generico NO es motivo de rechazo por sí solo. Solo rechaza si además tiene contenido inapropiado.
 
 PRODUCTOS A ANALIZAR:
 {products_json}
@@ -87,9 +88,9 @@ Devuelve un array JSON donde CADA producto tiene estos campos adicionales:
 - "señales_dropshipping": array de señales detectadas (ej: ["sin marca clara", "precio muy bajo", "copy genérico"])
 - "señales_marca_real": array de señales (ej: ["nombre de marca consistente", "estética propia"])
 - "calidad_contenido": puntuación del 1 al 10 (10 = contenido muy original y auténtico)
-- "aprobado": true o false
+- "aprobado": true o false (usa false MUY raramente, solo para fraude claro o contenido adulto explícito)
 - "rechazo_motivo": null si aprobado, o string con el motivo si rechazado
-- "rechazo_categoria": null si aprobado, o "contenido_inapropiado" | "claim_falso" | "fraude" | "ia_generico_sin_valor"
+- "rechazo_categoria": null si aprobado, o "contenido_inapropiado" | "claim_falso" | "fraude"
 
 Devuelve SOLO el array JSON. Sin texto. Sin markdown. Sin backticks."""
 
