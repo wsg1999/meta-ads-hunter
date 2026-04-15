@@ -66,16 +66,30 @@ Solo JSON puro. Sin texto extra."""
 
     r = client.messages.create(
         model="claude-opus-4-5",
-        max_tokens=3000,
+        max_tokens=4000,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = r.content[0].text.strip()
     s, e = raw.find("["), raw.rfind("]")+1
     try:
         products = json.loads(raw[s:e])
-        winners = [p for p in products if p.get("ganador") and p.get("score",0) >= 7]
+        winners = [p for p in products if p.get("ganador") and p.get("score",0) >= 6]
         print(f"🧠 [ANALYZER] {len(products)} evaluados → {len(winners)} candidatos")
         return winners
     except Exception as ex:
-        print(f"⚠️  [ANALYZER] Error: {ex}")
+        print(f"⚠️  [ANALYZER] Error JSON: {ex} — intentando extraer productos individuales...")
+        # Fallback: extraer objetos JSON uno a uno aunque el array esté roto
+        import re
+        products = []
+        for match in re.finditer(r'\{[^{}]+\}', raw, re.DOTALL):
+            try:
+                p = json.loads(match.group())
+                if p.get("nombre"):
+                    products.append(p)
+            except Exception:
+                continue
+        if products:
+            winners = [p for p in products if p.get("ganador") and p.get("score", 0) >= 6]
+            print(f"🧠 [ANALYZER] Recuperados {len(products)} productos individuales → {len(winners)} candidatos")
+            return winners
         return []
