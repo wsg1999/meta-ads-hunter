@@ -54,7 +54,29 @@ async def scrape_meta_ads(keywords: list, countries: list) -> list:
                         const out = [];
                         cards.forEach(c => {
                             const t = c.innerText || '';
-                            if (t.length > 40) out.push({ raw_text: t.slice(0,400) });
+                            if (t.length > 40) {
+                                // Intentar obtener el ID del anuncio desde links
+                                let ad_url = '';
+                                let ad_id  = '';
+                                const links = c.querySelectorAll('a[href*="id="]');
+                                if (links.length > 0) {
+                                    const href  = links[0].href;
+                                    const match = href.match(/[?&]id=(\d+)/);
+                                    if (match) {
+                                        ad_id  = match[1];
+                                        ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id;
+                                    }
+                                }
+                                // Fallback: buscar Library ID en el texto
+                                if (!ad_id) {
+                                    const m = t.match(/Library ID[:\s]+(\d+)/i) || t.match(/ID del anuncio[:\s]+(\d+)/i);
+                                    if (m) {
+                                        ad_id  = m[1];
+                                        ad_url = 'https://www.facebook.com/ads/library/?id=' + ad_id;
+                                    }
+                                }
+                                out.push({ raw_text: t.slice(0,400), ad_url: ad_url, ad_id: ad_id });
+                            }
                         });
                         return out;
                     }""")

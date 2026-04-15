@@ -19,7 +19,7 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
 HEADERS_WINNERS = [
     "Fecha", "Producto", "Marca", "Categoría",
-    "Nombre anunciante", "Ver anuncios en Meta",
+    "Nombre anunciante", "Ver anuncios en Meta", "Link directo al anuncio",
     "Tipo anuncio", "Score /10", "Días activo",
     "Gasto/día (USD)", "Variaciones", "Países",
     "Precio venta (MXN)", "Costo est. (MXN)", "Margen %",
@@ -34,7 +34,7 @@ HEADERS_TOP = [
     "Cómo replicarlo", "Ángulos alternativos",
     "Productos complementarios", "Riesgo saturación",
     "Ventana de oportunidad", "Replicabilidad /10",
-    "Ver anuncios en Meta",
+    "Ver anuncios en Meta", "Link directo al anuncio",
 ]
 
 HEADERS_COMP = [
@@ -132,7 +132,7 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             pais  = p.get("pais_origen", "MX")
             rows.append([
                 today, p.get("nombre",""), p.get("marca",""), p.get("categoria",""),
-                anun, build_meta_url(anun, pais),
+                anun, build_meta_url(anun, pais), p.get("ad_url",""),
                 p.get("tipo_anuncio",""), score, dias,
                 p.get("gasto_dia",""), p.get("variaciones",""),
                 ", ".join(p.get("paises",[])),
@@ -173,6 +173,7 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
                 p.get("ventana_oportunidad",""),
                 p.get("puntuacion_replicabilidad",""),
                 build_meta_url(anun, pais),
+                p.get("ad_url",""),
             ])
             sr = start + i
             fmt_reqs.append(color_cell(ws_top.id, sr, 4, 5, color_score(score)))
