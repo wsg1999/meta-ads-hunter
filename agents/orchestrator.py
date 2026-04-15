@@ -6,6 +6,7 @@ import json, asyncio, os
 from datetime import datetime
 
 from agents.keyword_agent    import get_auto_keywords, KEYWORD_POOL
+from agents.memory_agent     import get_smart_keywords
 from agents.scraper          import scrape_meta_ads
 from agents.analyzer         import analyze_ads
 from agents.quality_agent    import classify_and_filter
@@ -86,9 +87,18 @@ async def run():
     content_filter = config.get("content_filter", {})
     log_entries    = []
 
-    # 1. Keywords del día (con rotación automática)
-    all_keywords = await get_auto_keywords(base_keywords, countries, genero) if auto_keywords else base_keywords
-    log_entries.append(f"Keywords usadas ({len(all_keywords)}): {', '.join(all_keywords)}")
+    # 1. Memory Agent — aprende del historial y genera keywords inteligentes
+    smart_result  = await get_smart_keywords(base_keywords, config, countries, genero)
+    smart_keywords = smart_result["keywords"]
+    intelligence   = smart_result["intelligence"]
+    history_count  = smart_result["history_count"]
+
+    log_entries.append(f"Historial cargado: {history_count} ganadores anteriores")
+    log_entries.append(f"Señales tendencia: {' | '.join(intelligence.get('trend_signals', [])[:3])}")
+
+    # 2. Expandir con keyword agent (añade tendencias del momento)
+    all_keywords = await get_auto_keywords(smart_keywords, countries, genero) if auto_keywords else smart_keywords
+    log_entries.append(f"Keywords usadas ({len(all_keywords)}): {', '.join(all_keywords[:10])}")
 
     # 2-6. Pipeline principal
     print("🔄 [ORCHESTRATOR] Intento 1 — keywords del día...")

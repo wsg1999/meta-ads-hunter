@@ -9,7 +9,7 @@
 
   "auto_keywords": true,
 
-  "countries": ["MX", "CO", "ES", "AR", "US"],
+  "countries": ["ES", "IT", "FR", "DE", "PT"],
 
   "min_spend_usd_day": 65,
   "max_days_active": 30,

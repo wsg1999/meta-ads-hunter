@@ -15,39 +15,48 @@ async def analyze_ads(raw_ads, keywords, countries, min_spend, max_days, price_s
     if not ads_ctx:
         ads_ctx = "Sin datos del scraper. Genera ejemplos realistas basados en tendencias actuales."
 
-    prompt = f"""Experto en dropshipping de moda. Analiza estos anuncios de Meta Ads Library y genera productos ganadores.
+    pais_principal = countries[0] if countries else "ES"
 
-CRITERIOS GANADOR:
-- Menos de {max_days} días activo
+    prompt = f"""Experto en dropshipping de moda y tendencias europeas. Analiza estos anuncios de Meta Ads Library.
+
+CONTEXTO DE BÚSQUEDA:
+- Países objetivo: {', '.join(countries)}
+- Menos de {max_days} días activo (cuanto más reciente, mejor — queremos la curva ascendente)
 - Gasto estimado ≥ ${min_spend} USD/día
 - Segmento: {price_seg} | Género: {genero}
-- Países: {', '.join(countries)}
-- Keywords: {', '.join(keywords)}
+- Keywords del día: {', '.join(keywords)}
 
-ANUNCIOS:
+SCORING DE PRIMER MOVIMIENTO (muy importante):
+- Score 9-10: producto con menos de 7 días activo, gasto creciente, nicho poco saturado → OPORTUNIDAD MÁXIMA
+- Score 7-8: producto 7-20 días, buen margen, tendencia clara en Europa
+- Score 5-6: producto conocido pero con ángulo diferenciador
+- Prioriza siempre productos NUEVOS sobre productos ya establecidos
+
+ANUNCIOS DETECTADOS:
 {ads_ctx}
 
-Genera 8-10 productos ganadores potenciales. Para cada uno:
+Genera 8-12 productos ganadores. Para cada uno devuelve EXACTAMENTE este JSON:
 {{
   "nombre": "nombre específico del producto",
-  "marca": "marca creíble",
+  "marca": "marca o tienda anunciante",
   "categoria": "categoría exacta",
-  "dias_activo": número,
-  "gasto_dia": número USD,
-  "variaciones": número,
-  "paises": ["MX"],
-  "precio_venta_mxn": número,
-  "costo_estimado_mxn": número,
-  "margen_pct": número,
-  "angulo_venta": "frase corta",
-  "por_que_ganador": "razón específica",
-  "tendencia": true/false,
+  "dias_activo": número entero,
+  "gasto_dia": número entero USD,
+  "variaciones": número entero,
+  "paises": ["{pais_principal}"],
+  "precio_venta_mxn": número entero,
+  "costo_estimado_mxn": número entero,
+  "margen_pct": número entero,
+  "angulo_venta": "propuesta de valor en 5-8 palabras",
+  "por_que_ganador": "razón específica de 10-20 palabras",
+  "tendencia": true si está escalando,
   "score": número 1-10,
-  "ganador": true si score>=7,
-  "keyword_origen": "keyword",
-  "pais_origen": "MX",
-  "nombre_anunciante": "Nombre exacto de la página de Facebook que pone el anuncio",
-  "url_anunciante": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=MX&search_type=page&q=NOMBRE_ANUNCIANTE"
+  "ventaja_primer_movimiento": "descripción de por qué es una oportunidad temprana",
+  "ganador": true si score>=6,
+  "keyword_origen": "keyword que lo detectó",
+  "pais_origen": "{pais_principal}",
+  "nombre_anunciante": "nombre de la página/marca en Facebook",
+  "url_anunciante": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais_principal}&search_type=page&q=NOMBRE_ANUNCIANTE"
 }}
 
 En "nombre_anunciante" pon el nombre real de la página de Facebook que anuncia ese producto.
