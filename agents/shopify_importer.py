@@ -290,6 +290,66 @@ BROWSER_HEADERS = {
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
 }
 
+FB_SKIP = [
+    "facebook.com", "fb.com", "instagram.com", "fbcdn.net",
+    "whatsapp.com", "messenger.com", "fb.me",
+]
+
+
+async def extract_url_from_snapshot(session: aiohttp.ClientSession,
+                                     snapshot_url: str) -> str:
+    """
+    Accede al snapshot del anuncio en Meta y extrae la URL del botón CTA.
+    Esa URL es la web del anunciante (tienda del competidor).
+
+    Facebook envuelve los links externos en l.facebook.com/l.php?u=URL_REAL
+    así que hay que descodificar el parámetro u= para obtener la URL real.
+    """
+    if not snapshot_url or "facebook.com" not in snapshot_url:
+        return ""
+
+    print(f"🔍 [SNAPSHOT] Scrapeando snapshot del anuncio...")
+    try:
+        async with session.get(snapshot_url, headers=BROWSER_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=20),
+                               allow_redirects=True) as resp:
+            if resp.status != 200:
+                print(f"⚠️ [SNAPSHOT] Status {resp.status}")
+                return ""
+
+            html = await resp.text()
+
+            # Meta envuelve enlaces externos en l.facebook.com/l.php?u=REAL_URL
+            from urllib.parse import urlparse, parse_qs, unquote as _unquote
+            tracker_links = re.findall(
+                r'https?://l\.facebook\.com/l\.php\?[^"\'<>\s]+', html
+            )
+            for link in tracker_links:
+                try:
+                    params = parse_qs(urlparse(link).query)
+                    real = params.get("u", [""])[0]
+                    if real:
+                        real = _unquote(real).split("?")[0]
+                        if "." in real and not any(s in real for s in FB_SKIP):
+                            print(f"✅ [SNAPSHOT] URL competidor: {real}")
+                            return real
+                except Exception:
+                    pass
+
+            # Fallback: hrefs directos en el HTML del snapshot
+            for link in re.findall(r'href="(https?://[^"]+)"', html):
+                if any(s in link for s in FB_SKIP):
+                    continue
+                if "." in link and not link.endswith(".js"):
+                    clean = link.split("?")[0]
+                    print(f"✅ [SNAPSHOT] URL directa: {clean}")
+                    return clean
+
+    except Exception as ex:
+        print(f"⚠️ [SNAPSHOT] Error: {ex}")
+
+    return ""
+
 
 def clean_url(url: str) -> str:
     """Asegura que la URL tiene protocolo."""
@@ -496,12 +556,22 @@ async def get_competitor_content(session: aiohttp.ClientSession,
                                   product_name: str) -> dict:
     """
     Punto de entrada del scraper de competidores.
-    1. Usa la URL del Sheet si existe
-    2. Si no, la busca automáticamente en DuckDuckGo
+
+    Orden de prioridad para encontrar la tienda del competidor:
+    0. Snapshot del anuncio Meta → extrae la URL del botón 'Comprar'  ← NUEVO
+    1. URL directa guardada en el Sheet (si existe)
+    2. Búsqueda automática en DuckDuckGo
     """
     website_url = (
         product.get("🌐 Web anunciante", "") or
         product.get("website_url", "") or
+        ""
+    ).strip()
+
+    snapshot_url = (
+        product.get("👁️ Ver anuncio en Meta", "") or
+        product.get("snapshot_url", "") or
+        product.get("ad_url", "") or
         ""
     ).strip()
 
@@ -511,7 +581,14 @@ async def get_competitor_content(session: aiohttp.ClientSession,
         ""
     ).strip()
 
-    # ── Caso 1: tenemos URL directa ──────────────────────────────
+    # ── Caso 0: extraer URL del botón "Comprar" del snapshot del anuncio ──────
+    # Esta es la forma más fiable: la URL que ven los clientes al ver el anuncio
+    if snapshot_url and not website_url:
+        extracted = await extract_url_from_snapshot(session, snapshot_url)
+        if extracted:
+            website_url = extracted
+
+    # ── Caso 1: tenemos URL directa (de snapshot o del Sheet) ────────────────
     if website_url and website_url not in ("", "N/A", "-"):
         print(f"🔍 [SCRAPER] URL directa: {website_url}")
         result = await scrape_shopify_store(session, website_url, product_name)
@@ -521,10 +598,9 @@ async def get_competitor_content(session: aiohttp.ClientSession,
         if result.get("images"):
             return result
 
-    # ── Caso 2: buscamos la tienda automáticamente ───────────────
-    # Usar marca si la tenemos, o solo el nombre del producto
+    # ── Caso 2: búsqueda automática en DuckDuckGo ────────────────────────────
     search_query = f"{brand} {product_name}" if brand else product_name
-    print(f"🔍 [SCRAPER] Buscando tienda en DuckDuckGo: '{search_query[:50]}'...")
+    print(f"🔍 [SCRAPER] Buscando en DuckDuckGo: '{search_query[:50]}'...")
     candidates = await search_competitor_store(session, brand or product_name.split()[0], product_name)
 
     for candidate_url in candidates:
