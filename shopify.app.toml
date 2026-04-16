@@ -1,0 +1,16 @@
+name = "Automatizador Carlota"
+client_id = "67caaaac9a9f3da6b3b86e11d059ca4c"
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+scopes = "write_products,read_inventory,read_orders"
+
+[auth]
+redirect_urls = ["https://example.com", "https://example.com/api/auth"]
+
+[webhooks]
+api_version = "2026-04"
+
+[pos]
+embedded = false

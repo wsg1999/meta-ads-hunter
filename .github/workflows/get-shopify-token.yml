@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Exchange code for permanent token
         run: |
-          RESPONSE=$(curl -s -X POST "https://honeyman-4934.myshopify.com/admin/oauth/access_token" \
+          RESPONSE=$(curl -s -X POST "https://watadu-3t.myshopify.com/admin/oauth/access_token" \
             -H "Content-Type: application/json" \
             -d "{\"client_id\":\"67caaaac9a9f3da6b3b86e11d059ca4c\",\"client_secret\":\"${{ secrets.SHOPIFY_APP_SECRET }}\",\"code\":\"${{ github.event.inputs.oauth_code }}\"}")
           echo "Respuesta: $RESPONSE"
