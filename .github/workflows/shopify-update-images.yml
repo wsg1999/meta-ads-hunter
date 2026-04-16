@@ -1,0 +1,42 @@
+name: Shopify Update Images (añadir imágenes a productos existentes)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_products:
+        description: 'Cuántos productos actualizar (máx 10)'
+        required: false
+        default: '5'
+
+jobs:
+  update-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install anthropic aiohttp gspread google-auth
+
+      - name: Update product images
+        env:
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          GOOGLE_SHEET_ID:         ${{ secrets.GOOGLE_SHEET_ID }}
+          SHOPIFY_ACCESS_TOKEN:    ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_STORE_URL:       ${{ secrets.SHOPIFY_STORE_URL }}
+          MAX_PRODUCTS:            ${{ github.event.inputs.max_products || '5' }}
+        run: |
+          python -c "
+          import asyncio, os
+          from agents.shopify_image_updater import run_image_updater
+          max_p = int(os.environ.get('MAX_PRODUCTS', 5))
+          asyncio.run(run_image_updater(max_to_update=max_p))
+          "
