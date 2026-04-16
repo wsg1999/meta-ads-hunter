@@ -78,17 +78,66 @@ async def get_shopify_product_images(session, product_id):
     return None
 
 
-async def add_images_to_shopify(session, product_id, image_urls):
-    """Añade imágenes a un producto existente en Shopify."""
-    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{product_id}.json"
-    headers = {
+async def delete_all_product_images(session, product_id, existing_images):
+    """Elimina todas las imágenes existentes de un producto en Shopify."""
+    sh_headers = {
         "X-Shopify-Access-Token": SHOPIFY_TOKEN,
         "Content-Type": "application/json",
     }
+    deleted = 0
+    for img in existing_images:
+        img_id = img.get("id")
+        if not img_id:
+            continue
+        del_url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{product_id}/images/{img_id}.json"
+        try:
+            async with session.delete(del_url, headers=sh_headers,
+                                      timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    deleted += 1
+        except Exception as ex:
+            print(f"⚠️ Error borrando imagen {img_id}: {ex}")
+        await asyncio.sleep(0.3)
+    if deleted:
+        print(f"🗑️  {deleted} imágenes malas eliminadas del producto {product_id}")
+    return deleted
+
+
+def looks_like_bad_image(src: str) -> bool:
+    """Detecta si una imagen de Shopify es en realidad un badge/banner de AliExpress."""
+    if not src:
+        return False
+    src_lower = src.lower()
+    # Banners de AliExpress tienen nombres cortos y palabras como sale, choice, etc.
+    filename = src_lower.split('/')[-1].split('.')[0].split('?')[0]
+    bad_keywords = ['sale', 'choice', 'badge', 'banner', 'icon', 'logo',
+                    'coupon', 'free', 'ship', 'secure', 'guarantee', 'hot', 'new']
+    if any(kw in filename for kw in bad_keywords):
+        return True
+    # Nombres muy cortos son sospechosos
+    if len(filename) < 10:
+        return True
+    return False
+
+
+async def add_images_to_shopify(session, product_id, image_urls,
+                                 replace_existing: bool = False,
+                                 existing_images: list = None):
+    """Añade (o reemplaza) imágenes en un producto de Shopify."""
+    sh_headers = {
+        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+        "Content-Type": "application/json",
+    }
+    url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products/{product_id}.json"
+
     # Filtrar URLs con protocolos inválidos
     valid_urls = [u for u in image_urls if u.startswith("http")][:6]
     if not valid_urls:
         return False
+
+    # Si hay que reemplazar, borrar primero las malas
+    if replace_existing and existing_images:
+        await delete_all_product_images(session, product_id, existing_images)
 
     payload = {
         "product": {
@@ -251,60 +300,131 @@ async def search_and_scrape(session, english_term: str, spanish_name: str) -> li
 
 async def scrape_aliexpress_images(session, search_term: str) -> list:
     """
-    Fallback: busca imágenes de producto directamente en AliExpress.
-    AliExpress siempre tiene imágenes del producto real aunque no sea la tienda competidora.
+    Fallback: obtiene imágenes reales de producto de AliExpress.
+
+    AliExpress carga las fotos de producto con JavaScript, por lo que el HTML
+    estático solo contiene banners y badges (Sale, Choice...).
+
+    Estrategia:
+    1. Busca en AliExpress y extrae product_ids del JSON embebido en el HTML
+    2. Llama a la API pública de AliExpress para obtener imágenes del primer producto
+    3. Si no, usa Bing Images (que sí indexa AliExpress con imágenes reales)
     """
     if not search_term:
         return []
 
+    # ── Intento 1: AliExpress embed JSON ─────────────────────────────────────
     try:
         url = (f"https://www.aliexpress.com/wholesale"
-               f"?SearchText={quote(search_term)}"
-               f"&SortType=total_tranpro_desc&page=1")
+               f"?SearchText={quote(search_term)}&SortType=total_tranpro_desc")
         async with session.get(url, headers=BROWSER_HEADERS,
                                timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            if resp.status != 200:
-                print(f"⚠️ AliExpress respuesta {resp.status}")
-                return []
+            if resp.status == 200:
+                text = await resp.text()
 
-            text = await resp.text()
+                # AliExpress embebe datos de producto en JSON dentro del HTML
+                # Buscar patrones como: "productId":"123456789","imageUrl":"https://..."
+                product_ids = re.findall(r'"productId"\s*:\s*"?(\d{10,})"?', text)
+                img_candidates = re.findall(
+                    r'"imageUrl"\s*:\s*"(https?://[^"]+alicdn\.com[^"]+)"', text
+                )
+                # También buscar el patrón de imágenes en el JSON embebido
+                img_candidates += re.findall(
+                    r'"img"\s*:\s*"(//[^"]+alicdn\.com[^"]+)"', text
+                )
 
-            # Extraer URLs de imágenes de producto del CDN de AliExpress
-            patterns = [
-                r'https?://ae\d*\.alicdn\.com/kf/[^"\'>\s,]+\.(?:jpg|jpeg|png|webp)',
-                r'https?://[^"\'>\s,]+alicdn\.com/[^"\'>\s,]+\.(?:jpg|jpeg|png|webp)',
-            ]
+                seen = set()
+                valid_imgs = []
+                for img in img_candidates:
+                    # Normalizar protocolo
+                    if img.startswith("//"):
+                        img = "https:" + img
+                    img = img.split("?")[0]
+                    img = re.sub(r'_\d+x\d*(?:\.jpg|\.jpeg|\.png|\.webp)$', '.jpg', img)
 
-            raw_imgs = []
-            for pattern in patterns:
-                raw_imgs += re.findall(pattern, text)
+                    # Filtro clave: el nombre de archivo debe ser un hash largo (≥20 chars)
+                    # Las fotos de producto tienen nombres como "Sabcdef123456789.jpg"
+                    # Los badges tienen nombres como "sale-icon.png", "choice.webp"
+                    filename = img.split('/')[-1].split('.')[0]
+                    if len(filename) < 15:
+                        continue
+                    # Rechazar nombres con palabras legibles (son badges/banners)
+                    if re.search(r'(sale|choice|badge|icon|logo|banner|free|ship|coupon|plus|'
+                                 r'guarantee|secure|pay|card|return|flag|star|hot|new)',
+                                 filename, re.IGNORECASE):
+                        continue
 
-            # Limpiar y deduplicar
-            seen = set()
-            clean_imgs = []
-            for img in raw_imgs:
-                # Quitar parámetros de tamaño: _200x200.jpg → .jpg
-                base = re.sub(r'_\d+x\d*(?:\.jpg|\.jpeg|\.png|\.webp)$', '.jpg', img)
-                base = base.split("?")[0]
-                # Filtrar iconos y avatares (son muy pequeños)
-                if any(skip in base for skip in ["avatar", "icon", "logo", "banner", "60x60", "80x80"]):
-                    continue
-                if base not in seen:
-                    seen.add(base)
-                    # Asegurar que la URL tiene protocolo HTTPS
-                    if base.startswith("//"):
-                        base = "https:" + base
-                    if base.startswith("http"):
-                        clean_imgs.append(base)
-                if len(clean_imgs) >= 6:
-                    break
+                    if img not in seen and img.startswith("http"):
+                        seen.add(img)
+                        valid_imgs.append(img)
+                    if len(valid_imgs) >= 6:
+                        break
 
-            if clean_imgs:
-                print(f"✅ [UPDATER] {len(clean_imgs)} imágenes de AliExpress para '{search_term}'")
-            return clean_imgs
+                if valid_imgs:
+                    print(f"✅ [UPDATER] {len(valid_imgs)} imágenes reales de AliExpress JSON")
+                    return valid_imgs
+
+                # Si tenemos product_id, intentar obtener fotos via API de producto
+                if product_ids:
+                    pid = product_ids[0]
+                    api_url = f"https://www.aliexpress.com/item/{pid}.json"
+                    async with session.get(api_url, headers=BROWSER_HEADERS,
+                                           timeout=aiohttp.ClientTimeout(total=10)) as presp:
+                        if presp.status == 200:
+                            try:
+                                pdata = await presp.json(content_type=None)
+                                imgs_raw = (pdata.get("pageModule", {})
+                                                .get("imagePathList", []))
+                                imgs = []
+                                for img in imgs_raw[:6]:
+                                    if img.startswith("//"):
+                                        img = "https:" + img
+                                    imgs.append(img.split("?")[0])
+                                if imgs:
+                                    print(f"✅ [UPDATER] {len(imgs)} imágenes via AliExpress product API")
+                                    return imgs
+                            except Exception:
+                                pass
 
     except Exception as ex:
-        print(f"⚠️ AliExpress scraping error: {ex}")
+        print(f"⚠️ AliExpress HTML error: {ex}")
+
+    # ── Intento 2: Bing Images (indexa AliExpress con las fotos reales) ───────
+    try:
+        bing_url = (f"https://www.bing.com/images/search"
+                    f"?q={quote(search_term + ' aliexpress')}&first=1&count=6")
+        async with session.get(bing_url, headers=BROWSER_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 200:
+                text = await resp.text()
+                # Bing embebe las URLs de imagen real en murl= o mediaurl=
+                raw = re.findall(r'"murl"\s*:\s*"([^"]+alicdn\.com[^"]+)"', text)
+                raw += re.findall(r'mediaurl=([^&"]+alicdn[^&"]+)', text)
+
+                seen = set()
+                valid = []
+                for img in raw:
+                    img = unquote(img).split("?")[0]
+                    filename = img.split('/')[-1].split('.')[0]
+                    if len(filename) < 15:
+                        continue
+                    if re.search(r'(sale|choice|badge|icon|logo|banner)',
+                                 filename, re.IGNORECASE):
+                        continue
+                    if img not in seen and img.startswith("http"):
+                        seen.add(img)
+                        valid.append(img)
+                    if len(valid) >= 6:
+                        break
+
+                if valid:
+                    print(f"✅ [UPDATER] {len(valid)} imágenes via Bing Images")
+                    return valid
+
+    except Exception as ex:
+        print(f"⚠️ Bing Images error: {ex}")
+
+    print(f"⚠️ No se encontraron imágenes de producto para '{search_term}'")
     return []
 
 
@@ -425,18 +545,27 @@ async def run_image_updater(max_to_update: int = 5):
 
             print(f"\n📦 [{i}] '{display_name}' (ID: {product_id})")
 
-            # Ver si ya tiene imágenes
+            # Ver imágenes actuales
             existing = await get_shopify_product_images(session, product_id)
             if existing is None:
                 # Error de API (404 u otro) — saltamos
                 skipped += 1
                 continue
-            if len(existing) > 0:
-                print(f"⏭️  Ya tiene {len(existing)} imágenes, saltando")
-                skipped += 1
-                continue
 
-            # Buscar imágenes
+            # Detectar si las imágenes existentes son "malas" (banners de AliExpress)
+            replace_mode = False
+            if existing:
+                bad_count = sum(1 for img in existing
+                                if looks_like_bad_image(img.get("src", "")))
+                if bad_count == len(existing):
+                    print(f"⚠️  Tiene {len(existing)} imágenes pero son badges/banners → reemplazando")
+                    replace_mode = True
+                else:
+                    print(f"⏭️  Ya tiene {len(existing)} imágenes buenas, saltando")
+                    skipped += 1
+                    continue
+
+            # Buscar imágenes reales
             imgs = await find_images_for_product(
                 session,
                 product_name=nombre or nombre_orig,
@@ -448,8 +577,12 @@ async def run_image_updater(max_to_update: int = 5):
                 print(f"⚠️ No se encontraron imágenes para '{display_name}'")
                 continue
 
-            # Subir a Shopify
-            success = await add_images_to_shopify(session, product_id, imgs)
+            # Subir a Shopify (reemplazando las malas si las había)
+            success = await add_images_to_shopify(
+                session, product_id, imgs,
+                replace_existing=replace_mode,
+                existing_images=existing if replace_mode else None,
+            )
             if success:
                 updated += 1
 
