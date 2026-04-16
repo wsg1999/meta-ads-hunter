@@ -1,0 +1,22 @@
+name: Get Shopify Token (ejecutar UNA vez)
+
+on:
+  workflow_dispatch:
+    inputs:
+      oauth_code:
+        description: 'Código OAuth de Shopify (de la URL de example.com)'
+        required: true
+
+jobs:
+  get-token:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Exchange code for permanent token
+        run: |
+          RESPONSE=$(curl -s -X POST "https://honeyman-4934.myshopify.com/admin/oauth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"client_id\":\"67caaaac9a9f3da6b3b86e11d059ca4c\",\"client_secret\":\"${{ secrets.SHOPIFY_APP_SECRET }}\",\"code\":\"${{ github.event.inputs.oauth_code }}\"}")
+          echo "Respuesta: $RESPONSE"
+          TOKEN=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token','ERROR'))")
+          echo "TOKEN OBTENIDO: $TOKEN"
+          echo "Copia este token y guárdalo en GitHub Secrets como SHOPIFY_ACCESS_TOKEN"
