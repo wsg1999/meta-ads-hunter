@@ -113,19 +113,30 @@ def get_winners_from_sheet(sheet, tab_name="Ganadores ✓", max_rows=10) -> list
     return winners[-max_rows:]
 
 
-def build_shopify_description(product: dict, ai_description: str) -> str:
-    """HTML limpio para la descripción de Shopify."""
-    nombre = product.get("Producto", product.get("nombre", ""))
+def build_shopify_description(product: dict, ai_description: str,
+                               competitor_html: str = "") -> str:
+    """
+    HTML para la descripción de Shopify.
+    Si tenemos descripción del competidor, la usamos como base.
+    Si no, usamos la generada por IA.
+    """
     angulo = product.get("Ángulo de venta", "")
     por_que = product.get("Por qué es oportunidad", "")
 
-    html = f"""<div class="product-description">
+    # Prioridad: descripción real del competidor
+    if competitor_html and len(competitor_html) > 100:
+        # Limpiar scripts y estilos del HTML del competidor
+        competitor_clean = re.sub(r'<script[^>]*>.*?</script>', '', competitor_html, flags=re.DOTALL)
+        competitor_clean = re.sub(r'<style[^>]*>.*?</style>', '', competitor_clean, flags=re.DOTALL)
+        html = f'<div class="product-description">\n{competitor_clean}\n'
+    else:
+        html = f"""<div class="product-description">
   <p class="product-intro">{ai_description}</p>
 """
-    if angulo:
-        html += f'  <p><strong>✨ {angulo}</strong></p>\n'
-    if por_que:
-        html += f'  <p>{por_que}</p>\n'
+        if angulo:
+            html += f'  <p><strong>✨ {angulo}</strong></p>\n'
+        if por_que:
+            html += f'  <p>{por_que}</p>\n'
 
     html += """  <ul>
     <li>Envío rápido a toda España</li>
@@ -202,7 +213,11 @@ async def create_shopify_product(session: aiohttp.ClientSession, product_data: d
     payload = {
         "product": {
             "title": product_data["titulo_shopify"],
-            "body_html": build_shopify_description(product_data["original"], product_data["descripcion_larga"]),
+            "body_html": build_shopify_description(
+                product_data["original"],
+                product_data["descripcion_larga"],
+                product_data.get("descripcion_competidor", "")
+            ),
             "vendor": "Carlota's Collections",
             "product_type": product_data.get("tipo_producto", "Vestidos"),
             "tags": ", ".join(product_data.get("tags", [])),
@@ -267,97 +282,259 @@ def shopify_admin_url(product_id) -> str:
     return f"https://{SHOPIFY_STORE}/admin/products/{product_id}" if SHOPIFY_STORE else ""
 
 
-# ── Image Fetching ─────────────────────────────────────────────────────────────
+# ── Competitor Scraper ────────────────────────────────────────────────────────
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
 }
 
-async def fetch_aliexpress_images(session: aiohttp.ClientSession, search_term: str) -> list:
-    """Busca en AliExpress y devuelve URLs de imágenes del primer resultado."""
-    try:
-        q = quote(search_term)
-        url = f"https://www.aliexpress.com/wholesale?SearchText={q}&SortType=total_tranpro_desc"
-        async with session.get(url, headers=BROWSER_HEADERS,
-                               timeout=aiohttp.ClientTimeout(total=25),
-                               allow_redirects=True) as resp:
-            if resp.status != 200:
-                print(f"⚠️ [IMG] AliExpress status {resp.status}")
-                return []
-            text = await resp.text()
 
-            # Intento 1: JSON en window.runParams
-            m = re.search(r'window\.runParams\s*=\s*(\{.+?\});\s*window\.__', text, re.DOTALL)
-            if m:
-                try:
-                    data = json.loads(m.group(1))
-                    items = (data.get("data", {})
-                                 .get("root", {})
-                                 .get("fields", {})
-                                 .get("mods", {})
-                                 .get("itemList", {})
-                                 .get("content", []))
+def clean_url(url: str) -> str:
+    """Asegura que la URL tiene protocolo."""
+    url = url.strip()
+    if not url:
+        return ""
+    if not url.startswith("http"):
+        url = "https://" + url
+    return url.rstrip("/")
+
+
+async def scrape_shopify_store(session: aiohttp.ClientSession,
+                                store_url: str,
+                                product_name: str) -> dict:
+    """
+    Intenta obtener el producto de una tienda Shopify usando su API JSON pública.
+    Devuelve dict con 'description' (HTML) y 'images' (lista de URLs).
+    """
+    domain = clean_url(store_url)
+    if not domain:
+        return {}
+
+    # Quitamos el path para quedarnos solo con el dominio raíz
+    from urllib.parse import urlparse
+    parsed = urlparse(domain)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+
+    search_terms = [
+        product_name,
+        " ".join(product_name.split()[:3]),   # primeras 3 palabras
+        " ".join(product_name.split()[:2]),   # primeras 2 palabras
+    ]
+
+    for term in search_terms:
+        if not term.strip():
+            continue
+        try:
+            # Shopify public product search API
+            api_url = f"{root}/search/suggest.json?q={quote(term)}&resources[type]=product&resources[limit]=3"
+            async with session.get(api_url, headers=BROWSER_HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    results = (data.get("resources", {})
+                                   .get("results", {})
+                                   .get("products", []))
+                    if results:
+                        product_handle = results[0].get("handle", "")
+                        if product_handle:
+                            product_url = f"{root}/products/{product_handle}.json"
+                            async with session.get(product_url, headers=BROWSER_HEADERS,
+                                                   timeout=aiohttp.ClientTimeout(total=15)) as presp:
+                                if presp.status == 200:
+                                    pdata = await presp.json()
+                                    prod = pdata.get("product", {})
+                                    images = [img["src"].split("?")[0]
+                                              for img in prod.get("images", [])[:6]
+                                              if img.get("src")]
+                                    desc = prod.get("body_html", "")
+                                    if images:
+                                        print(f"✅ [SCRAPER] Shopify API: '{results[0].get('title','')}' — {len(images)} imgs")
+                                        return {"description": desc, "images": images,
+                                                "title_competitor": results[0].get("title", "")}
+        except Exception as ex:
+            print(f"⚠️ [SCRAPER] Error Shopify API: {ex}")
+
+    # Fallback: products.json clásico
+    for term in search_terms[:2]:
+        try:
+            api_url = f"{root}/products.json?title={quote(term)}&limit=3"
+            async with session.get(api_url, headers=BROWSER_HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    products = data.get("products", [])
+                    if products:
+                        prod = products[0]
+                        images = [img["src"].split("?")[0]
+                                  for img in prod.get("images", [])[:6]
+                                  if img.get("src")]
+                        desc = prod.get("body_html", "")
+                        if images:
+                            print(f"✅ [SCRAPER] products.json: '{prod.get('title','')}' — {len(images)} imgs")
+                            return {"description": desc, "images": images,
+                                    "title_competitor": prod.get("title", "")}
+        except Exception as ex:
+            print(f"⚠️ [SCRAPER] Error products.json: {ex}")
+
+    return {}
+
+
+async def scrape_generic_store(session: aiohttp.ClientSession,
+                                store_url: str,
+                                product_name: str) -> dict:
+    """
+    Para tiendas NO-Shopify: scrapea la página de búsqueda y extrae
+    imágenes de producto con regex.
+    """
+    domain = clean_url(store_url)
+    if not domain:
+        return {}
+
+    from urllib.parse import urlparse
+    parsed = urlparse(domain)
+    root = f"{parsed.scheme}://{parsed.netloc}"
+
+    # Intentar búsqueda estándar
+    search_urls = [
+        f"{root}/search?q={quote(product_name)}",
+        f"{root}/buscar?q={quote(product_name)}",
+        f"{root}/?s={quote(product_name)}",
+    ]
+    for s_url in search_urls:
+        try:
+            async with session.get(s_url, headers=BROWSER_HEADERS,
+                                   timeout=aiohttp.ClientTimeout(total=15),
+                                   allow_redirects=True) as resp:
+                if resp.status != 200:
+                    continue
+                text = await resp.text()
+
+                # Extraer links de productos en la página de resultados
+                product_links = re.findall(
+                    r'href="(/(?:products|producto|item|p)/[^"?#]+)"',
+                    text
+                )
+                if not product_links:
+                    continue
+
+                # Tomar el primer resultado de producto
+                product_path = product_links[0]
+                product_page_url = root + product_path
+                async with session.get(product_page_url, headers=BROWSER_HEADERS,
+                                       timeout=aiohttp.ClientTimeout(total=15)) as presp:
+                    if presp.status != 200:
+                        continue
+                    ptext = await presp.text()
+
+                    # Extraer imágenes (CDN de Shopify o imágenes genéricas de producto)
                     imgs = []
-                    for item in items[:5]:
-                        img = (item.get("image", {}).get("imgUrl") or
-                               item.get("item", {}).get("mainImageUrl", ""))
-                        if img:
-                            if img.startswith("//"):
-                                img = "https:" + img
-                            imgs.append(img)
+                    # CDN Shopify
+                    shopify_imgs = re.findall(
+                        r'https://cdn\.shopify\.com/s/files/[^"\'>\s]+\.(?:jpg|jpeg|png|webp)',
+                        ptext
+                    )
+                    for img in shopify_imgs:
+                        clean = re.sub(r'_\d+x\d*', '', img).split("?")[0]
+                        if clean not in imgs:
+                            imgs.append(clean)
+                        if len(imgs) >= 6:
+                            break
+
                     if imgs:
-                        print(f"🖼️ [IMG] {len(imgs)} imágenes de AliExpress (runParams)")
-                        return imgs
-                except Exception:
-                    pass
+                        print(f"✅ [SCRAPER] Genérico: {len(imgs)} imágenes de {root}")
+                        return {"images": imgs, "description": ""}
+        except Exception as ex:
+            print(f"⚠️ [SCRAPER] Error genérico: {ex}")
 
-            # Intento 2: URLs del CDN alicdn.com en el HTML
-            raw_imgs = re.findall(
-                r'https://ae01\.alicdn\.com/kf/[A-Za-z0-9_\-]+\.[a-z]{3,4}',
-                text
-            )
-            seen, imgs = set(), []
-            for img in raw_imgs:
-                base = re.sub(r'_\d+x\d+', '', img)
-                if base not in seen:
-                    seen.add(base)
-                    imgs.append(base)
-                if len(imgs) >= 5:
-                    break
-            if imgs:
-                print(f"🖼️ [IMG] {len(imgs)} imágenes de AliExpress (CDN regex)")
-                return imgs
+    return {}
 
+
+async def search_competitor_store(session: aiohttp.ClientSession,
+                                   brand: str,
+                                   product_name: str) -> list:
+    """
+    Busca la tienda del competidor en DuckDuckGo cuando no tenemos la URL directa.
+    Devuelve lista de URLs candidatas para probar.
+    """
+    candidates = []
+    query = f"{brand} {product_name[:40]} tienda"
+    try:
+        ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+        async with session.get(ddg_url, headers=BROWSER_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status == 200:
+                text = await resp.text()
+                # Extraer URLs de resultados de búsqueda
+                links = re.findall(
+                    r'uddg=([^&"]+)',
+                    text
+                )
+                from urllib.parse import unquote
+                for link in links[:8]:
+                    url = unquote(link)
+                    # Filtrar redes sociales, marketplaces y Google
+                    if any(skip in url for skip in [
+                        "facebook.com", "instagram.com", "twitter.com",
+                        "amazon.", "ebay.", "google.", "youtube.", "tiktok.",
+                        "aliexpress", "duckduckgo"
+                    ]):
+                        continue
+                    if url.startswith("http"):
+                        candidates.append(url)
+                        if len(candidates) >= 4:
+                            break
     except Exception as ex:
-        print(f"⚠️ [IMG] Error AliExpress: {ex}")
-    return []
+        print(f"⚠️ [SCRAPER] Error DuckDuckGo: {ex}")
+
+    return candidates
 
 
-async def find_product_images(session: aiohttp.ClientSession, product: dict, ai_content: dict) -> list:
-    """Obtiene imágenes del producto de AliExpress."""
-    search_term = (
-        ai_content.get("busqueda_aliexpress") or
-        product.get("Cómo encontrar proveedor", "") or
-        product.get("Producto", "")
-    )
-    if not search_term:
-        return []
+async def get_competitor_content(session: aiohttp.ClientSession,
+                                  product: dict,
+                                  product_name: str) -> dict:
+    """
+    Punto de entrada del scraper de competidores.
+    1. Usa la URL del Sheet si existe
+    2. Si no, la busca automáticamente en DuckDuckGo
+    """
+    website_url = (
+        product.get("🌐 Web anunciante", "") or
+        product.get("website_url", "") or
+        ""
+    ).strip()
 
-    imgs = await fetch_aliexpress_images(session, search_term)
-    if imgs:
-        return imgs
+    brand = (
+        product.get("Marca anunciante", "") or
+        product.get("Marca", "") or
+        product_name.split()[0]
+    ).strip()
 
-    # Segundo intento con término simplificado (primeras 2 palabras)
-    words = search_term.split()
-    if len(words) > 2:
-        imgs = await fetch_aliexpress_images(session, " ".join(words[:2]))
-        if imgs:
-            return imgs
+    # ── Caso 1: tenemos URL directa ──────────────────────────────
+    if website_url and website_url not in ("", "N/A", "-"):
+        print(f"🔍 [SCRAPER] URL directa: {website_url}")
+        result = await scrape_shopify_store(session, website_url, product_name)
+        if result.get("images"):
+            return result
+        result = await scrape_generic_store(session, website_url, product_name)
+        if result.get("images"):
+            return result
 
-    print(f"⚠️ [IMG] Sin imágenes para '{search_term[:50]}'")
-    return []
+    # ── Caso 2: buscamos la tienda automáticamente ───────────────
+    print(f"🔍 [SCRAPER] Buscando tienda de '{brand}' en DuckDuckGo...")
+    candidates = await search_competitor_store(session, brand, product_name)
+
+    for candidate_url in candidates:
+        print(f"   → Probando: {candidate_url[:60]}")
+        result = await scrape_shopify_store(session, candidate_url, product_name)
+        if result.get("images"):
+            print(f"✅ [SCRAPER] ¡Encontrado en {candidate_url[:50]}!")
+            return result
+        await asyncio.sleep(0.5)
+
+    print(f"⚠️ [SCRAPER] No se encontró tienda del competidor para '{brand}'")
+    return {}
 
 
 async def run_importer(max_to_import: int = 5):
@@ -430,11 +607,23 @@ async def run_importer(max_to_import: int = 5):
             )
             ai_content["busqueda_aliexpress"] = busqueda_ali
 
-            # Buscar imágenes del producto
-            print(f"🖼️ [IMPORTER] Buscando imágenes para '{nombre}'...")
-            imagenes = await find_product_images(session, product, ai_content)
-            ai_content["imagenes"] = imagenes
-            await asyncio.sleep(1)  # Pausa entre AliExpress y Shopify
+            # ── Scraping del competidor (imágenes + descripción real) ──
+            print(f"🔍 [IMPORTER] Buscando contenido del competidor para '{nombre}'...")
+            competitor = await get_competitor_content(session, product, nombre)
+            await asyncio.sleep(1)
+
+            # Si obtenemos imágenes del competidor, las usamos
+            if competitor.get("images"):
+                ai_content["imagenes"] = competitor["images"]
+                print(f"✅ [IMPORTER] {len(competitor['images'])} imágenes del competidor")
+            else:
+                ai_content["imagenes"] = []
+                print(f"⚠️ [IMPORTER] Sin imágenes del competidor, importando sin imagen")
+
+            # Si el competidor tiene descripción real, la usamos (en lugar de la generada por IA)
+            if competitor.get("description") and len(competitor["description"]) > 100:
+                ai_content["descripcion_competidor"] = competitor["description"]
+                print(f"✅ [IMPORTER] Usando descripción real del competidor")
 
             # Crear en Shopify
             shopify_result = await create_shopify_product(session, ai_content)
