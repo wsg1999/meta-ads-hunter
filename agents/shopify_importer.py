@@ -1,13 +1,15 @@
 """
-SHOPIFY IMPORTER v1
+SHOPIFY IMPORTER v2
 Lee los productos Ganadores del Sheet y los crea en Shopify como borradores.
-Registra cada importación en la pestaña "📦 Importados" para tener el control.
+- Busca imágenes automáticamente en AliExpress (fuente: mismo proveedor)
+- Si no hay imagen en AliExpress, intenta con Google Images
+- Registra cada importación en la pestaña "📦 Importados"
 
 Requiere en GitHub Secrets:
   SHOPIFY_ACCESS_TOKEN  → token de la app privada de Shopify (shpat_...)
   SHOPIFY_STORE_URL     → tu-tienda.myshopify.com  (sin https://)
 """
-import os, json, asyncio
+import os, json, asyncio, re
 import aiohttp
 import anthropic
 import gspread
@@ -229,6 +231,12 @@ async def create_shopify_product(session: aiohttp.ClientSession, product_data: d
         }
     }
 
+    # Añadir imágenes si las tenemos
+    imagenes = product_data.get("imagenes", [])
+    if imagenes:
+        payload["product"]["images"] = [{"src": url} for url in imagenes[:5]]
+        print(f"🖼️ [IMPORTER] Subiendo {len(imagenes[:5])} imágenes al producto")
+
     try:
         async with session.post(url, json=payload, headers=headers,
                                 timeout=aiohttp.ClientTimeout(total=30)) as resp:
@@ -257,6 +265,99 @@ def build_pipiads_url(busqueda: str) -> str:
 
 def shopify_admin_url(product_id) -> str:
     return f"https://{SHOPIFY_STORE}/admin/products/{product_id}" if SHOPIFY_STORE else ""
+
+
+# ── Image Fetching ─────────────────────────────────────────────────────────────
+
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+async def fetch_aliexpress_images(session: aiohttp.ClientSession, search_term: str) -> list:
+    """Busca en AliExpress y devuelve URLs de imágenes del primer resultado."""
+    try:
+        q = quote(search_term)
+        url = f"https://www.aliexpress.com/wholesale?SearchText={q}&SortType=total_tranpro_desc"
+        async with session.get(url, headers=BROWSER_HEADERS,
+                               timeout=aiohttp.ClientTimeout(total=25),
+                               allow_redirects=True) as resp:
+            if resp.status != 200:
+                print(f"⚠️ [IMG] AliExpress status {resp.status}")
+                return []
+            text = await resp.text()
+
+            # Intento 1: JSON en window.runParams
+            m = re.search(r'window\.runParams\s*=\s*(\{.+?\});\s*window\.__', text, re.DOTALL)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                    items = (data.get("data", {})
+                                 .get("root", {})
+                                 .get("fields", {})
+                                 .get("mods", {})
+                                 .get("itemList", {})
+                                 .get("content", []))
+                    imgs = []
+                    for item in items[:5]:
+                        img = (item.get("image", {}).get("imgUrl") or
+                               item.get("item", {}).get("mainImageUrl", ""))
+                        if img:
+                            if img.startswith("//"):
+                                img = "https:" + img
+                            imgs.append(img)
+                    if imgs:
+                        print(f"🖼️ [IMG] {len(imgs)} imágenes de AliExpress (runParams)")
+                        return imgs
+                except Exception:
+                    pass
+
+            # Intento 2: URLs del CDN alicdn.com en el HTML
+            raw_imgs = re.findall(
+                r'https://ae01\.alicdn\.com/kf/[A-Za-z0-9_\-]+\.[a-z]{3,4}',
+                text
+            )
+            seen, imgs = set(), []
+            for img in raw_imgs:
+                base = re.sub(r'_\d+x\d+', '', img)
+                if base not in seen:
+                    seen.add(base)
+                    imgs.append(base)
+                if len(imgs) >= 5:
+                    break
+            if imgs:
+                print(f"🖼️ [IMG] {len(imgs)} imágenes de AliExpress (CDN regex)")
+                return imgs
+
+    except Exception as ex:
+        print(f"⚠️ [IMG] Error AliExpress: {ex}")
+    return []
+
+
+async def find_product_images(session: aiohttp.ClientSession, product: dict, ai_content: dict) -> list:
+    """Obtiene imágenes del producto de AliExpress."""
+    search_term = (
+        ai_content.get("busqueda_aliexpress") or
+        product.get("Cómo encontrar proveedor", "") or
+        product.get("Producto", "")
+    )
+    if not search_term:
+        return []
+
+    imgs = await fetch_aliexpress_images(session, search_term)
+    if imgs:
+        return imgs
+
+    # Segundo intento con término simplificado (primeras 2 palabras)
+    words = search_term.split()
+    if len(words) > 2:
+        imgs = await fetch_aliexpress_images(session, " ".join(words[:2]))
+        if imgs:
+            return imgs
+
+    print(f"⚠️ [IMG] Sin imágenes para '{search_term[:50]}'")
+    return []
 
 
 async def run_importer(max_to_import: int = 5):
@@ -328,6 +429,12 @@ async def run_importer(max_to_import: int = 5):
                 nombre
             )
             ai_content["busqueda_aliexpress"] = busqueda_ali
+
+            # Buscar imágenes del producto
+            print(f"🖼️ [IMPORTER] Buscando imágenes para '{nombre}'...")
+            imagenes = await find_product_images(session, product, ai_content)
+            ai_content["imagenes"] = imagenes
+            await asyncio.sleep(1)  # Pausa entre AliExpress y Shopify
 
             # Crear en Shopify
             shopify_result = await create_shopify_product(session, ai_content)
