@@ -1,0 +1,67 @@
+name: Fix Shopify App Scopes (ejecutar UNA vez)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fix-scopes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update app scopes via Partners API
+        run: |
+          python3 << 'EOF'
+          import urllib.request, json
+
+          PARTNERS_TOKEN = "${{ secrets.SHOPIFY_PARTNERS_TOKEN }}"
+          ORG_ID = "203047093"
+          APP_ID = "gid://partners/App/348254470145"
+
+          query = """
+          mutation UpdateAppScopes($id: ID!) {
+            appUpdate(id: $id, app: {
+              requestedAccessScopes: ["write_products", "read_inventory", "read_orders"]
+            }) {
+              app {
+                id
+                title
+                requestedAccessScopes { handle }
+              }
+              userErrors { field message }
+            }
+          }
+          """
+
+          payload = json.dumps({
+              "query": query,
+              "variables": {"id": APP_ID}
+          }).encode()
+
+          req = urllib.request.Request(
+              f"https://partners.shopify.com/{ORG_ID}/api/2024-10/graphql.json",
+              data=payload,
+              headers={
+                  "Content-Type": "application/json",
+                  "X-Shopify-Access-Token": PARTNERS_TOKEN,
+              },
+              method="POST"
+          )
+          with urllib.request.urlopen(req, timeout=20) as resp:
+              result = json.loads(resp.read().decode())
+              print(json.dumps(result, indent=2))
+              errors = result.get("data", {}).get("appUpdate", {}).get("userErrors", [])
+              if errors:
+                  print(f"ERRORES: {errors}")
+              else:
+                  scopes = result.get("data", {}).get("appUpdate", {}).get("app", {}).get("requestedAccessScopes", [])
+                  print(f"✅ Scopes actualizados: {[s['handle'] for s in scopes]}")
+          EOF
+
+      - name: Next step instructions
+        run: |
+          echo "✅ Si no hay errores, ahora:"
+          echo "1. Visita esta URL para reinstalar con los permisos correctos:"
+          echo "   https://honeyman-4934.myshopify.com/admin/oauth/authorize?client_id=67caaaac9a9f3da6b3b86e11d059ca4c&scope=write_products,read_inventory,read_orders&redirect_uri=https://example.com&state=carlota2026"
+          echo "2. Aprueba los permisos"
+          echo "3. Copia el code de la URL"
+          echo "4. Ejecuta 'Get Shopify Token' con el nuevo code"
+          echo "5. Actualiza SHOPIFY_ACCESS_TOKEN con el token nuevo"
