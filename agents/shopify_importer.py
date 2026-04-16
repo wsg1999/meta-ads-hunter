@@ -459,7 +459,7 @@ async def search_competitor_store(session: aiohttp.ClientSession,
     Devuelve lista de URLs candidatas para probar.
     """
     candidates = []
-    query = f"{brand} {product_name[:40]} tienda"
+    query = f'"{product_name[:40]}" comprar tienda online' if not brand else f"{brand} {product_name[:30]} tienda"
     try:
         ddg_url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
         async with session.get(ddg_url, headers=BROWSER_HEADERS,
@@ -508,7 +508,7 @@ async def get_competitor_content(session: aiohttp.ClientSession,
     brand = (
         product.get("Marca anunciante", "") or
         product.get("Marca", "") or
-        product_name.split()[0]
+        ""
     ).strip()
 
     # ── Caso 1: tenemos URL directa ──────────────────────────────
@@ -522,8 +522,10 @@ async def get_competitor_content(session: aiohttp.ClientSession,
             return result
 
     # ── Caso 2: buscamos la tienda automáticamente ───────────────
-    print(f"🔍 [SCRAPER] Buscando tienda de '{brand}' en DuckDuckGo...")
-    candidates = await search_competitor_store(session, brand, product_name)
+    # Usar marca si la tenemos, o solo el nombre del producto
+    search_query = f"{brand} {product_name}" if brand else product_name
+    print(f"🔍 [SCRAPER] Buscando tienda en DuckDuckGo: '{search_query[:50]}'...")
+    candidates = await search_competitor_store(session, brand or product_name.split()[0], product_name)
 
     for candidate_url in candidates:
         print(f"   → Probando: {candidate_url[:60]}")
