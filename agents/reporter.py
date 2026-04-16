@@ -1,6 +1,6 @@
 """
-REPORTER v4 — 5 pestañas en Google Sheets:
-  - Ganadores        : con colores por días y score
+REPORTER v5 — 5 pestañas en Google Sheets:
+  - Ganadores        : con colores por días y score + enlaces spy tools
   - Top 4 del día    : análisis profundo de los 4 mejores
   - Competidores     : análisis de tiendas web rivales
   - Descartados      : rechazados con motivo
@@ -8,6 +8,7 @@ REPORTER v4 — 5 pestañas en Google Sheets:
 """
 import os, json
 from datetime import datetime
+from urllib.parse import quote
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -19,7 +20,16 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 
 HEADERS_WINNERS = [
     "Fecha", "Producto", "Marca anunciante", "Categoría",
-    "🔗 Snapshot anuncio", "📘 Todos los anuncios de la página", "🌐 Web del comercio",
+    # ── Columna clave: ver el anuncio en Meta (requiere estar logueado en FB)
+    "👁️ Ver anuncio en Meta",
+    # ── Spy tools: busca el mismo producto con 1 clic
+    "🔍 Buscar en PiPiADS",
+    "🛒 Buscar proveedor AliExpress",
+    "🛍️ Buscar en Temu",
+    "🔎 Google Shopping",
+    # ── La tienda del anunciante (si la API la devuelve)
+    "🌐 Web anunciante",
+    # ── Texto real del anuncio (EU: a veces vacío por GDPR)
     "Texto real del anuncio",
     "Score /10", "Score Dropshipping", "Días activo", "Gasto/día (USD)",
     "País", "Precio venta (EUR)", "Costo proveedor (EUR)", "Margen %",
@@ -83,14 +93,33 @@ def color_amenaza(nivel):
     return {"alto": C_ROJO, "medio": C_AMARILLO, "bajo": C_VERDE}.get(nivel.lower(), C_AMARILLO)
 
 def build_meta_url(nombre, pais="ES"):
-    """URL directa con nombre exacto de página + país — igual que buscar manualmente en Meta Ads Library."""
-    from urllib.parse import quote
+    """URL directa con nombre exacto de página — igual que buscar en Meta Ads Library."""
     q = quote(nombre)
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=page&q={q}"
 
+def build_pipiads_url(nombre_producto: str) -> str:
+    """Busca el producto en PiPiADS (ads de Facebook/TikTok de dropshipping)."""
+    q = quote(nombre_producto)
+    return f"https://www.pipiads.com/ads/?keyword={q}&ad_platform=facebook&ad_language=es"
+
+def build_aliexpress_url(busqueda: str) -> str:
+    """Búsqueda directa del producto en AliExpress para encontrar el proveedor."""
+    q = quote(busqueda)
+    return f"https://www.aliexpress.com/wholesale?SearchText={q}&sortType=total_tranpro_desc"
+
+def build_temu_url(busqueda: str) -> str:
+    """Búsqueda en Temu del producto."""
+    q = quote(busqueda)
+    return f"https://www.temu.com/search_result.html?search_key={q}"
+
+def build_google_shopping_url(busqueda: str) -> str:
+    """Google Shopping para ver quién lo vende y a qué precio."""
+    q = quote(busqueda)
+    return f"https://www.google.com/search?q={q}&tbm=shop&gl=es&hl=es"
+
 def build_keyword_url(nombre_producto, pais="ES"):
-    """URL de búsqueda por keyword — para encontrar el anuncio específico del producto."""
-    q = nombre_producto.replace(' ', '+').replace('&', '%26')
+    """URL de búsqueda por keyword en Meta Ads Library."""
+    q = quote(nombre_producto)
     return f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={pais}&search_type=keyword_unordered&q={q}"
 
 def connect_sheet():
@@ -149,24 +178,45 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
             dias  = p.get("dias_activo", 30)
             score = p.get("score", 5)
             anun  = p.get("nombre_anunciante", p.get("marca", ""))
-            pais  = p.get("pais_origen", "MX")
+            pais  = p.get("pais_origen", "ES")
+            nombre_producto = p.get("nombre", "")
+            keyword = p.get("keyword_origen", p.get("keyword", nombre_producto))
+
+            # ── Construir el término de búsqueda más específico posible ──
+            # Combina el nombre del producto con la keyword para mejores resultados
+            busqueda_proveedor = p.get("como_encontrar_proveedor", "") or keyword or nombre_producto
+            busqueda_spy = nombre_producto or keyword
+
+            # ── Ver el anuncio en Meta (requiere estar logueado en Facebook) ──
+            meta_snapshot = (
+                p.get("snapshot_url") or
+                p.get("ad_url") or
+                build_keyword_url(keyword or nombre_producto, pais)
+            )
+
             rows.append([
                 today,
-                p.get("nombre",""),
+                nombre_producto,
                 anun,
                 p.get("categoria",""),
-                # LINK 1: Snapshot directo al anuncio (viene directo de la API)
-                p.get("snapshot_url") or p.get("ad_url",""),
-                # LINK 2: Todos los anuncios de esa página (view_all_page_id si tenemos page_id)
-                p.get("page_url") or p.get("url_meta_ads") or build_meta_url(anun, pais),
-                # LINK 3: Web del comercio (del caption del anuncio)
+                # 👁️ Ver anuncio en Meta — clic aquí con Facebook abierto en otro tab
+                meta_snapshot,
+                # 🔍 PiPiADS — ve quién más anuncia este producto y qué copy usan
+                build_pipiads_url(busqueda_spy),
+                # 🛒 AliExpress — encuentra el proveedor directamente
+                build_aliexpress_url(busqueda_proveedor),
+                # 🛍️ Temu — alternativa de proveedor más barato
+                build_temu_url(busqueda_spy),
+                # 🔎 Google Shopping — ve a qué precio lo venden otros
+                build_google_shopping_url(busqueda_spy),
+                # 🌐 Web del anunciante (si la API la devuelve — vacío en EU por GDPR)
                 p.get("website_url") or p.get("url_web",""),
-                # TEXTO REAL del anuncio tal como aparece en Meta Ads
+                # Texto real del anuncio (vacío si Meta no lo devuelve por GDPR)
                 p.get("raw_text","")[:400],
                 score,
                 p.get("score_dropshipping", p.get("score","")),
                 dias,
-                p.get("gasto_dia_usd", p.get("gasto_dia","")),
+                p.get("gasto_dia_usd", p.get("gasto_dia", p.get("gasto_dia_est",""))),
                 p.get("pais", pais),
                 p.get("precio_venta_eur", p.get("precio_venta_mxn","")),
                 p.get("costo_proveedor_eur", p.get("costo_estimado_eur", p.get("costo_estimado_mxn",""))),
@@ -178,8 +228,11 @@ async def save_to_sheets(winners, rejected, top_ads, competitors, log_lines, con
                 p.get("keyword_origen", p.get("keyword","")),
             ])
             sr = start + i
-            fmt_reqs.append(color_cell(ws_win.id, sr, 8, 9, color_score(score)))   # col H score
-            fmt_reqs.append(color_cell(ws_win.id, sr, 7, 8, color_dias(dias)))     # col I días — índice ajustado
+            # Columnas (0-indexed): A=0 Fecha, B=1 Producto, C=2 Marca, D=3 Cat
+            # E=4 Meta, F=5 PiPiADS, G=6 AliExpress, H=7 Temu, I=8 GoogleShopping
+            # J=9 WebAnunciante, K=10 Texto, L=11 Score, M=12 ScoreDrop, N=13 Días...
+            fmt_reqs.append(color_cell(ws_win.id, sr, 11, 12, color_score(score)))  # col L: Score /10
+            fmt_reqs.append(color_cell(ws_win.id, sr, 13, 14, color_dias(dias)))    # col N: Días activo
         ws_win.append_rows(rows, value_input_option="USER_ENTERED")
         print(f"📊 {len(rows)} ganadores añadidos")
 
